@@ -1,0 +1,51 @@
+# TO-Agents Lite — CPU-only dependency set.
+#
+# Deliberately NO cupy here: this file must install on a machine with no GPU.
+# For a GPU (Colab/Kaggle T4, or your own), add the CUDA extra afterwards:
+#
+#     pip install cupy-cuda12x        # match your CUDA major version
+#
+# scikit-sparse needs SuiteSparse headers present BEFORE pip runs:
+#     Debian/Ubuntu/Colab:  sudo apt-get install -y libsuitesparse-dev
+#     macOS:                brew install suite-sparse
+
+# --- the topology-optimization engine -------------------------------------- #
+# Public repo; the CPU backend (pyFANTOM.CPU) needs no GPU.
+pyFANTOM @ git+https://github.com/bellastewart/pyFANTOM_TO-Agents
+
+# --- numerics --------------------------------------------------------------- #
+numpy
+scipy
+numba                 # JIT kernels — this is what makes the CPU backend viable
+scikit-sparse
+sympy
+
+# --- multi-agent layer ------------------------------------------------------ #
+pyautogen
+pydantic>=2
+nest_asyncio
+
+# --- model providers -------------------------------------------------------- #
+openai                # also used for Gemini via its OpenAI-compat endpoint
+together
+google-genai          # ai_judge's gemini backend (NOT google-generativeai, which is EOL)
+requests
+python-dotenv
+
+# --- rendering (all CPU; no GPU, no display) -------------------------------- #
+vtk
+k3d
+ipywidgets
+playwright            # then: playwright install chromium
+matplotlib
+plotly
+pillow
+pygmsh
+tqdm
+
+# --- web server ------------------------------------------------------------- #
+fastapi
+uvicorn[standard]
+
+# --- misc ------------------------------------------------------------------- #
+ipython               # agents import get_ipython

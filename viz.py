@@ -1,0 +1,302 @@
+"""
+viz.py — headless renderers for the demo UI.
+
+Two jobs, both pure/offline (no GPU, no Chromium):
+
+1. render_setup_diagram(config, out_path)
+   A schematic of the problem BEFORE optimization: the domain box, the
+   Dirichlet BC regions, and the load arrows — drawn straight from the parsed
+   config JSON's geometric predicates (mesh[0].l*, bc[].selection.rules,
+   forces[].forces).  Mirrors the node-selection semantics in
+   agents/to_agent_both.py.
+
+2. render_density_frame(npy_path, config, out_path)
+   One movie frame: reshape a saved rho density array to the mesh grid and
+   project it to a 2D silhouette image with a colormap.
+"""
+
+import json
+import os
+import numpy as np
+
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+import matplotlib.image as mpimg
+import matplotlib.cm as cm
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers 3d projection)
+
+_AXIS = {"x": 0, "y": 1, "z": 2}
+
+
+# --------------------------------------------------------------------------- #
+# config helpers
+# --------------------------------------------------------------------------- #
+def _mesh_dims(config):
+    m = (config.get("mesh") or [{}])[0]
+    return (
+        int(m.get("nx", 0)), int(m.get("ny", 0)), int(m.get("nz", 0)),
+        float(m.get("lx", 1.0)), float(m.get("ly", 1.0)), float(m.get("lz", 1.0)),
+    )
+
+
+def _sample_grid(lx, ly, lz, n=24):
+    """A coarse node grid over the domain, spacing roughly uniform per axis."""
+    L = max(lx, ly, lz)
+    def na(l):
+        return max(2, int(round(n * (l / L)))) if l > 0 else 2
+    xs = np.linspace(0, lx, na(lx))
+    ys = np.linspace(0, ly, na(ly))
+    zs = np.linspace(0, lz, na(lz))
+    X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+    pts = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
+    spacing = max((xs[1] - xs[0]) if len(xs) > 1 else lx,
+                  (ys[1] - ys[0]) if len(ys) > 1 else ly,
+                  (zs[1] - zs[0]) if len(zs) > 1 else lz)
+    return pts, spacing
+
+
+def _rule_mask(pts, rule, vis_tol):
+    """Boolean mask for one AxisRule, matching to_agent_both semantics."""
+    axis = rule.get("axis", "x")
+    op = rule.get("operator", "equals")
+    val = float(rule.get("value", 0.0))
+    if axis == "diag":
+        # Special diagonal used for loads: y - (0.5 - 0.5 x), restricted band in x.
+        x, y = pts[:, 0], pts[:, 1]
+        d = y - (0.5 - 0.5 * x)
+        return (np.abs(d) < max(vis_tol, 0.03)) & (x > 0.05) & (x < 0.95)
+    c = pts[:, _AXIS.get(axis, 0)]
+    if op == "equals":
+        return np.abs(c - val) <= vis_tol
+    if op == "greater_than":
+        return c > val
+    if op == "less_than":
+        return c < val
+    if op == "between":
+        vmax = float(rule.get("value_max") if rule.get("value_max") is not None else val)
+        return (c > val) & (c < vmax)
+    return np.abs(c - val) <= vis_tol
+
+
+def _selection_mask(pts, selection, spacing):
+    rules = (selection or {}).get("rules", []) or []
+    tol = float((selection or {}).get("tolerance", 1e-6) or 1e-6)
+    vis_tol = max(tol, 0.6 * spacing)
+    mask = np.ones(len(pts), dtype=bool)
+    for r in rules:
+        mask &= _rule_mask(pts, r, vis_tol)
+    return mask
+
+
+def _box_edges(lx, ly, lz):
+    c = np.array([[0, 0, 0], [lx, 0, 0], [lx, ly, 0], [0, ly, 0],
+                  [0, 0, lz], [lx, 0, lz], [lx, ly, lz], [0, ly, lz]], float)
+    e = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+         (0, 4), (1, 5), (2, 6), (3, 7)]
+    return c, e
+
+
+# --------------------------------------------------------------------------- #
+# 1. setup diagram
+# --------------------------------------------------------------------------- #
+def render_setup_plotly(config, out_html):
+    """Interactive (drag-to-rotate) 3D setup diagram, written as a self-contained
+    HTML file. Z is the vertical axis; proportions are true (aspectmode='data')."""
+    import plotly.graph_objects as go
+
+    nx, ny, nz, lx, ly, lz = _mesh_dims(config)
+    pts, spacing = _sample_grid(lx, ly, lz)
+    traces = []
+
+    # domain box as a single line trace (None separators between edges)
+    corners, edges = _box_edges(lx, ly, lz)
+    bx, by, bz = [], [], []
+    for a, b in edges:
+        bx += [corners[a][0], corners[b][0], None]
+        by += [corners[a][1], corners[b][1], None]
+        bz += [corners[a][2], corners[b][2], None]
+    traces.append(go.Scatter3d(x=bx, y=by, z=bz, mode="lines",
+                               line=dict(color="#7d8590", width=3),
+                               name="domain", hoverinfo="skip", showlegend=False))
+
+    # boundary conditions
+    for i, bc in enumerate(config.get("bc", []) or []):
+        mask = _selection_mask(pts, bc.get("selection"), spacing)
+        if not mask.any():
+            continue
+        dofs = bc.get("dofs", {}) or {}
+        fixed = [d for d in ("ux", "uy", "uz") if dofs.get(d) is not None]
+        name = bc.get("name") or f"BC {i+1}"
+        traces.append(go.Scatter3d(
+            x=pts[mask, 0], y=pts[mask, 1], z=pts[mask, 2], mode="markers",
+            marker=dict(size=3.5, color="#f778ba", symbol="square"),
+            name=f"{name}: fix {','.join(fixed) or 'none'} ({int(mask.sum())})",
+            hovertemplate="fixed %{text}<extra></extra>",
+            text=[",".join(fixed)] * int(mask.sum())))
+
+    # loads: sample points + a cone arrowhead + a shaft line
+    diag = float(np.sqrt(lx**2 + ly**2 + lz**2))
+    for i, frc in enumerate(config.get("forces", []) or []):
+        mask = _selection_mask(pts, frc.get("selection"), spacing)
+        if not mask.any():
+            continue
+        comps = frc.get("forces", {}) or {}
+        vec = np.array([comps.get("fx") or 0.0, comps.get("fy") or 0.0, comps.get("fz") or 0.0], float)
+        if np.linalg.norm(vec) == 0:
+            continue
+        loc = pts[mask].mean(axis=0)
+        u = vec / np.linalg.norm(vec)
+        L = 0.30 * diag
+        cs = ",".join(f"{k}={v}" for k, v in comps.items() if v)
+        name = frc.get("name") or f"Load {i+1}"
+        traces.append(go.Scatter3d(
+            x=pts[mask, 0], y=pts[mask, 1], z=pts[mask, 2], mode="markers",
+            marker=dict(size=3, color="#ffa657", opacity=0.6), name=f"{name}: {cs}",
+            hoverinfo="skip"))
+        tail = loc - u * L
+        traces.append(go.Scatter3d(x=[tail[0], loc[0]], y=[tail[1], loc[1]], z=[tail[2], loc[2]],
+                                   mode="lines", line=dict(color="#ffa657", width=6),
+                                   showlegend=False, hoverinfo="skip"))
+        traces.append(go.Cone(x=[loc[0]], y=[loc[1]], z=[loc[2]],
+                              u=[u[0]*L*0.5], v=[u[1]*L*0.5], w=[u[2]*L*0.5],
+                              anchor="tip", colorscale=[[0, "#ffa657"], [1, "#ffa657"]],
+                              showscale=False, sizemode="absolute", sizeref=0.4*L,
+                              hoverinfo="skip"))
+
+    fig = go.Figure(data=traces)
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+        margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11, color="#e6edf3"),
+                    x=0, y=1, orientation="v"),
+        scene=dict(
+            xaxis=dict(title="x", backgroundcolor="#161b22", gridcolor="#30363d", color="#9198a1"),
+            yaxis=dict(title="y", backgroundcolor="#161b22", gridcolor="#30363d", color="#9198a1"),
+            zaxis=dict(title="z", backgroundcolor="#161b22", gridcolor="#30363d", color="#9198a1"),
+            aspectmode="data",
+            camera=dict(up=dict(x=0, y=0, z=1), eye=dict(x=0.5, y=-1.35, z=1.5)),
+        ),
+    )
+    fig.write_html(out_html, include_plotlyjs="directory", full_html=True,
+                   config={"displaylogo": False, "responsive": True})
+    return out_html
+
+
+def render_setup_diagram(config, out_path):
+    nx, ny, nz, lx, ly, lz = _mesh_dims(config)
+    pts, spacing = _sample_grid(lx, ly, lz)
+
+    fig = Figure(figsize=(6.4, 5.2), dpi=130)
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_facecolor("none")
+    fig.patch.set_alpha(0.0)
+
+    # domain box
+    corners, edges = _box_edges(lx, ly, lz)
+    for a, b in edges:
+        ax.plot(*zip(corners[a], corners[b]), color="#7d8590", lw=1.0, alpha=0.7)
+
+    legend = []
+
+    # boundary conditions
+    for i, bc in enumerate(config.get("bc", []) or []):
+        mask = _selection_mask(pts, bc.get("selection"), spacing)
+        if not mask.any():
+            continue
+        dofs = bc.get("dofs", {}) or {}
+        fixed = [d for d in ("ux", "uy", "uz") if dofs.get(d) is not None]
+        name = bc.get("name") or f"BC {i+1}"
+        color = "#f778ba"
+        ax.scatter(pts[mask, 0], pts[mask, 1], pts[mask, 2],
+                   s=16, c=color, marker="s", depthshade=False, alpha=0.9)
+        legend.append((color, f"{name}: fix {','.join(fixed) or 'none'} ({int(mask.sum())} nodes)", "s"))
+
+    # loads
+    diag = np.sqrt(lx**2 + ly**2 + lz**2)
+    for i, frc in enumerate(config.get("forces", []) or []):
+        mask = _selection_mask(pts, frc.get("selection"), spacing)
+        if not mask.any():
+            continue
+        comps = frc.get("forces", {}) or {}
+        vec = np.array([comps.get("fx") or 0.0, comps.get("fy") or 0.0, comps.get("fz") or 0.0], float)
+        if np.linalg.norm(vec) == 0:
+            continue
+        loc = pts[mask].mean(axis=0)
+        u = vec / np.linalg.norm(vec)
+        L = 0.28 * diag
+        name = frc.get("name") or f"Load {i+1}"
+        color = "#ffa657"
+        ax.scatter(pts[mask, 0], pts[mask, 1], pts[mask, 2],
+                   s=14, c=color, marker="o", depthshade=False, alpha=0.6)
+        # draw arrow pointing INTO the load location along the force direction
+        ax.quiver(loc[0] - u[0]*L, loc[1] - u[1]*L, loc[2] - u[2]*L,
+                  u[0]*L, u[1]*L, u[2]*L, color=color, lw=2.2, arrow_length_ratio=0.28)
+        mag = np.linalg.norm(vec)
+        comp_str = ",".join(f"{k}={v}" for k, v in comps.items() if v)
+        legend.append((color, f"{name}: {comp_str} (|F|={mag:g})", "^"))
+
+    # cosmetics
+    ax.set_xlabel("x", color="#9198a1"); ax.set_ylabel("y", color="#9198a1"); ax.set_zlabel("z", color="#9198a1")
+    ax.set_title(f"Problem setup — {nx}×{ny}×{nz} grid, domain {lx:g}×{ly:g}×{lz:g}",
+                 color="#e6edf3", fontsize=10)
+    try:
+        ax.set_box_aspect((lx, ly, lz))
+    except Exception:
+        pass
+    ax.tick_params(colors="#6e7681", labelsize=7)
+    for pane in (ax.xaxis, ax.yaxis, ax.zaxis):
+        pane.pane.set_alpha(0.0)
+        pane.pane.set_edgecolor("#30363d")
+    ax.view_init(elev=22, azim=-58)
+
+    if legend:
+        from matplotlib.lines import Line2D
+        handles = [Line2D([0], [0], marker=mk, color="none", markerfacecolor=col,
+                          markersize=9, label=lab) for col, lab, mk in legend]
+        leg = ax.legend(handles=handles, loc="upper left", fontsize=7.5,
+                        framealpha=0.15, labelcolor="#e6edf3")
+        leg.get_frame().set_edgecolor("#30363d")
+
+    fig.tight_layout()
+    fig.savefig(out_path, transparent=True)
+    return out_path
+
+
+# --------------------------------------------------------------------------- #
+# 2. density movie frame
+# --------------------------------------------------------------------------- #
+def _reshape_rho(rho, nx, ny, nz):
+    n = rho.size
+    for shape in ((nx, ny, nz), (nz, ny, nx), (nx, nz, ny)):
+        if all(shape) and np.prod(shape) == n:
+            try:
+                return rho.reshape(shape)
+            except Exception:
+                continue
+    # fallback: best-effort square-ish 2D
+    side = int(round(np.sqrt(n)))
+    if side * side == n:
+        return rho.reshape(side, side, 1)
+    return None
+
+
+def render_density_frame(npy_path, config, out_path, proj_axis=2, cmap="magma"):
+    """Reshape a saved rho array to the mesh grid, project to 2D, save a PNG frame."""
+    rho = np.load(npy_path)
+    rho = np.asarray(rho, dtype=float).ravel()
+    nx, ny, nz, lx, ly, lz = _mesh_dims(config)
+    vol = _reshape_rho(rho, nx, ny, nz)
+    if vol is None:
+        # give up gracefully: 1D bar
+        img = rho.reshape(1, -1)
+    else:
+        axis = min(proj_axis, vol.ndim - 1)
+        img = vol.max(axis=axis)          # silhouette: densest material along thickness
+        img = np.flipud(img.T)            # x horizontal, y vertical, origin lower-left
+    img = np.clip(img, 0.0, 1.0)
+    mpimg.imsave(out_path, img, cmap=cmap, vmin=0.0, vmax=1.0)
+    return out_path

@@ -1,0 +1,15 @@
+# Secrets — never commit. A Gemini key leaked through a notebook once already.
+.env
+.env.*
+!.env.example
+
+# Per-run working dirs (transcripts, frames, screenshots) — can be hundreds of MB
+runs/
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Notebook outputs: strip before committing (`nbstripout --install`)
+# Outputs are where credentials and large images sneak into git history.
