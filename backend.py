@@ -34,7 +34,7 @@ from pathlib import Path
 import numpy as _np
 
 __all__ = ["BACKEND", "xp", "to_numpy", "HAS_LOCAL_FILTER", "describe",
-           "HAS_SKSPARSE", "COARSE_SOLVER",
+           "HAS_SKSPARSE", "COARSE_SOLVER", "THREADS",
            "StructuredMesh3D", "GeneralMesh", "StructuredStiffnessKernel",
            "UniformStiffnessKernel", "GeneralStiffnessKernel", "MultiGrid", "CG",
            "SPSOLVE", "FiniteElement", "StructuredFilter3D", "GeneralFilter",
@@ -76,6 +76,41 @@ if str(_REPO_ROOT) not in sys.path:
 # deliberately conservative: a shared login-node GPU often has a few hundred MiB
 # free, which passes a toy allocation and then dies on the first real solve.
 MIN_VRAM_MB = float(os.environ.get("TO_MIN_VRAM_MB", "3072"))
+
+
+def _cap_threads() -> str:
+    """Stop numba/OpenMP oversubscribing on many-core machines.
+
+    pyFANTOM's CPU kernels are numba ``prange`` loops. numba defaults to one
+    thread per core, which is catastrophic for the small-to-medium meshes this
+    build runs. Measured on a 244-core node, 128 elements, per iteration:
+
+        244 threads   ~12-14 s
+          4 threads     0.01 s      <- ~1400x faster
+
+    The work per element is tiny, so thread launch and barrier costs dominate
+    completely. A laptop or a Colab runtime (2-4 cores) never notices; a
+    workstation or an HPC login node grinds to a halt.
+
+    Must run BEFORE numba is first imported — numba reads this at import time.
+    An explicit NUMBA_NUM_THREADS from the caller is always respected.
+    """
+    if os.environ.get("NUMBA_NUM_THREADS"):
+        return f"NUMBA_NUM_THREADS={os.environ['NUMBA_NUM_THREADS']} (from environment)"
+    try:
+        cores = len(os.sched_getaffinity(0))       # respects cgroup/slurm limits
+    except AttributeError:
+        cores = os.cpu_count() or 1
+    cap = int(os.environ.get("TO_MAX_THREADS", "8"))
+    n = max(1, min(cores, cap))
+    os.environ["NUMBA_NUM_THREADS"] = str(n)
+    # OpenMP is numba's threading layer here; leaving it uncapped re-introduces
+    # the same oversubscription one layer down.
+    os.environ.setdefault("OMP_NUM_THREADS", str(n))
+    return f"{n} threads (of {cores} cores; cap TO_MAX_THREADS={cap})"
+
+
+THREADS = _cap_threads()
 
 
 def _ensure_sksparse() -> bool:
@@ -268,6 +303,7 @@ def describe() -> dict:
     mesh, why = suggest_mesh()
     return {"backend": BACKEND, "requested": _requested, "detection": _REASON,
             "has_sksparse": HAS_SKSPARSE, "coarse_solver": COARSE_SOLVER,
+            "threads": THREADS,
             "array_module": xp.__name__, "local_filter": HAS_LOCAL_FILTER,
             "free_vram_mb": free_vram_mb(),
             "suggested_mesh": {"nx": mesh[0], "ny": mesh[1], "nz": mesh[2],

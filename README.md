@@ -58,6 +58,22 @@ python doctor.py                                # <- ALWAYS run this first
 python app.py                                   # http://localhost:8080
 ```
 
+### Two checks, in order
+
+```bash
+python doctor.py     # is everything installed and reachable?
+python selftest.py   # does a real optimization actually run here? (no API needed)
+```
+
+`selftest.py` builds and solves a real cantilever through the same
+`build_optimization` the agents call, and reports seconds per iteration. Measured
+on a clean CPU-only install:
+
+| Mesh | Elements | s/iteration | 200 iterations |
+|---|---|---|---|
+| 8×24×24 | 128 | 0.01 | seconds |
+| 48×24×24 | 27,648 | **1.36** | **~4.5 min** |
+
 ### `doctor.py`
 
 Checks the three things that independently decide whether anything can run —
@@ -130,8 +146,15 @@ Stated plainly, because silent degradation is worse than a missing feature:
 - **Gemini's free tier has real quotas.** Sustained testing returns HTTP 429
   ("exceeded your current quota"); it resets on its own. `doctor.py` labels this
   distinctly from a bad key.
-- **CPU wall-clock is unmeasured.** The CPU path is verified to import, build,
-  and apply BCs/loads. A full optimization to convergence has not been timed.
+- **Thread oversubscription is catastrophic on many-core machines.** numba
+  defaults to one thread per core; at 128 elements on a 244-core node that is
+  ~12 s/iteration versus 0.01 s with 8 threads — a ~1400× difference, because
+  thread launch and barrier costs dwarf the per-element work. `backend.py` caps
+  it at 8 (`TO_MAX_THREADS`, or set `NUMBA_NUM_THREADS` yourself). Laptops and
+  Colab runtimes never hit this; workstations and HPC nodes do.
+- **CPU runs are slower than GPU but usable.** 1.36 s/iteration at 27,648
+  elements. A full run to convergence has still not been done end-to-end through
+  the agent loop.
 
 See `LITE_STRATEGY.md` for the measurements behind each of these.
 
