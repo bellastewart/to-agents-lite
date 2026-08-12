@@ -406,6 +406,42 @@ class TOAgentBoth(UserProxyAgent):
         # which needs scikit-sparse. That package is source-only and frequently
         # fails to build, so fall back to scipy's sparse LU when it is absent.
         # An explicit coarse_solver in the config always wins.
+        # LITE 10: cap multigrid levels against the mesh.
+        #
+        # Each level halves the grid, so too many levels leave a coarse grid too
+        # small to solve meaningfully and the V-cycle diverges. The failure is
+        # silent and slow: the objective goes NaN partway through, the run still
+        # reports "Optimization complete", and screenshots of noise are rendered.
+        #
+        # Measured, mesh 20x10x10 (min dim 10), E=2.1e11, r_min=2.0:
+        #   n_level=1  (coarsest 10)   ->  ok, objective 1709
+        #   n_level=2  (coarsest 5)    ->  NaN at iteration 17
+        #   n_level=3  (coarsest 2.5)  ->  NaN at iteration 9   <- agent's choice
+        #
+        # Conditioning matters too -- the same mesh at n_level=3 is stable with
+        # E=1.0 -- but the agent emits SI units (steel at 2.1e11 Pa), so the cap
+        # is the lever that does not require rescaling the physics.
+        #
+        # The floor of 8 elements on the coarsest grid is the usual multigrid
+        # rule of thumb, and it reproduces the safe answer above. It is
+        # calibrated on this one mesh, so it is adjustable rather than hardcoded.
+        _dims = [int(mesh_params[k]) for k in ("nx", "ny", "nz") if k in mesh_params]
+        if _dims and int(multigrid_params.get("n_level", 1)) > 1:
+            _floor = int(os.environ.get("TO_MG_COARSEST_MIN", "8"))
+            _safe = 1
+            while min(_dims) // (2 ** _safe) >= _floor:
+                _safe += 1
+            _asked = int(multigrid_params["n_level"])
+            if _asked > _safe:
+                print(f"   ⚠️  n_level={_asked} is too many for a "
+                      f"{'x'.join(str(d) for d in _dims)} mesh: it coarsens the "
+                      f"{min(_dims)}-element direction to "
+                      f"{min(_dims) // (2 ** (_asked - 1))}, below the {_floor}-element "
+                      f"floor, and the V-cycle diverges to NaN mid-run. Using "
+                      f"n_level={_safe}. Raise TO_MG_COARSEST_MIN to override, or "
+                      f"use a finer mesh to afford more levels.")
+                multigrid_params = dict(multigrid_params, n_level=_safe)
+
         multigrid_params.setdefault("coarse_solver", COARSE_SOLVER)
         if not HAS_SKSPARSE and multigrid_params["coarse_solver"] == "cholmod":
             print("   \u26a0\ufe0f  coarse_solver='cholmod' requested but scikit-sparse is "
