@@ -143,9 +143,15 @@ Stated plainly, because silent degradation is worse than a missing feature:
 - **Gemini 3.x thinking tokens are charged against `maxOutputTokens`.** At a low
   cap you get a truncated fragment with no error. `providers.py` enforces a
   2048-token floor and raises on `finishReason=MAX_TOKENS`.
-- **Gemini's free tier has real quotas.** Sustained testing returns HTTP 429
-  ("exceeded your current quota"); it resets on its own. `doctor.py` labels this
-  distinctly from a bad key.
+- **Gemini's free tier allows 20 requests/day PER MODEL** (quota id
+  `GenerateRequestsPerDayPerProjectPerModel-FreeTier`). This is the limit you will
+  actually hit. Because it is per *model*, the default config gives each role a
+  different one — `gemini-3.5-flash-lite` for structured output,
+  `gemini-3-flash-preview` for vision, `gemini-3.6-flash` for the judge — which
+  triples the effective budget. If one role 429s, switch just that role to
+  another model; verified vision-capable and independently quota'd:
+  `gemini-3-flash-preview`, `gemini-3.1-flash-lite`, `gemini-3.5-flash-lite`,
+  `gemini-3.6-flash`, `gemini-flash-latest`.
 - **Thread oversubscription is catastrophic on many-core machines.** numba
   defaults to one thread per core; at 128 elements on a 244-core node that is
   ~12 s/iteration versus 0.01 s with 8 threads — a ~1400× difference, because

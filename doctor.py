@@ -261,8 +261,12 @@ def check_models(live=True):
             hint = ""
             if "non-serverless" in msg:
                 hint = "  <- model exists but needs a DEDICATED endpoint, not serverless"
-            elif "no credits" in msg.lower() or "429" in msg:
-                hint = "  <- account out of credits"
+            elif "429" in msg or "quota" in msg.lower():
+                hint = ("  <- Gemini free tier = 20 requests/DAY per MODEL "
+                        "(not per account). Switch THIS role to another model — each "
+                        "has its own budget. Verified vision-capable: "
+                        "gemini-3-flash-preview, gemini-3.1-flash-lite, "
+                        "gemini-3.5-flash-lite, gemini-3.6-flash, gemini-flash-latest.")
             elif "leaked" in msg.lower():
                 hint = "  <- key was revoked as leaked; rotate it"
             elif "Connection" in msg or "connect" in msg.lower():
