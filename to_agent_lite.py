@@ -505,6 +505,96 @@ class TOAgentBoth(UserProxyAgent):
         
         return physics, mesh, FE, filter_obj, problem, optimizer
 
+    # LITE 8: screenshot capture on the CPU backend.
+    #
+    # pyFANTOM implements the capture chain ONLY on the CUDA side:
+    #   Problem/CUDA/MinimumCompliance.capture_solution_screenshots
+    #     -> FiniteElement/CUDA/FiniteElement.visualize_screenshot_density
+    #        -> visualizers/_3d.capture_solution_screenshots_3D
+    # Neither of the first two exists for CPU (FiniteElement's base declaration
+    # is an abstract `raise NotImplementedError`), so on the zero-GPU path the
+    # original call died with
+    #   'MinimumCompliance' object has no attribute 'capture_solution_screenshots'
+    # and the run continued to the judge, which then failed with
+    #   "Need at least 2 screenshot directories, found 0".
+    #
+    # Both CUDA links are pure plumbing: they `.get()` cupy arrays and forward
+    # to the third function, which takes plain arrays and renders through
+    # k3d -> HTML -> headless Chromium with no GPU involved. So CPU can call it
+    # directly. It is not re-exported from `visualizers/__init__`, hence the
+    # private-module import.
+    def _capture_screenshots(self, screenshot_dir):
+        """Render depth + stress screenshots on whichever backend is active."""
+        native = getattr(self.problem, "capture_solution_screenshots", None)
+        if callable(native):
+            return native(output_dir=screenshot_dir)
+
+        from pyFANTOM.visualizers._3d import capture_solution_screenshots_3D
+        import numpy as _np
+
+        FE = self.FE
+        if not getattr(FE, "is_3D", True):
+            raise RuntimeError(
+                "LITE: CPU screenshot fallback supports 3D meshes only; this "
+                "problem is 2D. Use the CUDA backend for 2D capture.")
+
+        rho = _to_numpy(self.problem.get_desvars())
+        n_mat = getattr(self.problem, "n_material", 1)
+        if n_mat > 1:
+            rho = rho.reshape(n_mat, -1).T
+
+        # Stress colouring is a nice-to-have: a failed FEA must not cost us the
+        # depth renders, which are what the vision agent actually needs.
+        stress, kw = None, {}
+        try:
+            stress = _to_numpy(self.problem.FEA(thresshold=True)["von_mises"])
+            nz = stress[stress > 1e-10]
+            if nz.size:
+                kw["max_value"] = float(_np.percentile(nz, 99.0))
+        except Exception as e:
+            print(f"   ⚠️  von Mises unavailable ({type(e).__name__}: {e}); "
+                  f"rendering depth only.")
+
+        dof = FE.mesh.dof
+        call = dict(
+            nodes=_to_numpy(FE.mesh.nodes),
+            elements=_to_numpy(FE.mesh.elements),
+            f=_to_numpy(FE.rhs).reshape(-1, dof),
+            c=_to_numpy(FE.kernel.constraints).reshape(-1, dof),
+            rho=rho,
+            output_dir=screenshot_dir,
+            stress=stress,
+            colormap="jet",
+            stress_label="von Mises",
+            **kw,
+        )
+
+        # The published pyFANTOM's renderer takes only
+        #   nodes, elements, f, c, rho, output_dir, delay, *_color
+        # while the stress arguments exist only in a locally modified copy. Drop
+        # whatever this build cannot accept instead of raising TypeError, and say
+        # so, because losing stress colouring silently would leave the vision
+        # agent comparing depth-only renders while the prompts still say stress.
+        import inspect as _inspect
+        accepted = set(_inspect.signature(capture_solution_screenshots_3D).parameters)
+        dropped = sorted(k for k in call if k not in accepted and call[k] is not None)
+        if dropped:
+            # vllm_agent_both reads `<dir>/depth/{view}.png` and
+            # `<dir>/stress/{view}.png`. This renderer writes flat and cannot
+            # colour by stress, so put the renders where the depth half is
+            # expected and leave `stress/` genuinely absent. Duplicating depth
+            # images into stress/ would satisfy the path check while feeding the
+            # vision agent two identical pictures it was told differ -- a worse
+            # failure than a missing directory, because nothing would report it.
+            print(f"   ⚠️  this pyFANTOM's capture_solution_screenshots_3D does not "
+                  f"accept {', '.join(dropped)} — rendering DEPTH ONLY into "
+                  f"'{screenshot_dir}/depth'. No stress renders will exist; the "
+                  f"vision agent sees half the imagery the prompts describe.")
+        call["output_dir"] = os.path.join(screenshot_dir, "depth")
+        os.makedirs(call["output_dir"], exist_ok=True)
+        return capture_solution_screenshots_3D(
+            **{k: v for k, v in call.items() if k in accepted})
+
     def run_optimization(self, num_iterations=None, screenshot_dir=None):
         """Run the optimization loop and capture screenshots"""    
         if not hasattr(self, 'optimizer'):
@@ -615,7 +705,7 @@ class TOAgentBoth(UserProxyAgent):
         if os.path.exists("STOP"):
             print("🛑 Stop requested — skipping final screenshot capture.")
         else:
-            result = self.problem.capture_solution_screenshots(output_dir=screenshot_dir)
+            result = self._capture_screenshots(screenshot_dir)   # LITE 8
 
             if asyncio.iscoroutine(result):
                 asyncio.run(result)
