@@ -1,6 +1,11 @@
 # TO-Agents Lite
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bellastewart/to-agents-lite/blob/main/notebooks/TO_Agents_Lite_Colab.ipynb)
+
 A multi-agent topology-optimization pipeline that runs **without a GPU of your own**.
+
+**Fastest path: click the badge.** It sets everything up on a free Colab T4 in
+about four minutes — you supply two free API keys and nothing else.
 
 You paste a verbose technical description of a structural problem. A group of
 agents turns it into a validated config, runs a 3D topology optimization,
