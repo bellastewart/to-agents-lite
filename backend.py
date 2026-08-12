@@ -97,6 +97,25 @@ def _cap_threads() -> str:
     """
     if os.environ.get("NUMBA_NUM_THREADS"):
         return f"NUMBA_NUM_THREADS={os.environ['NUMBA_NUM_THREADS']} (from environment)"
+
+    # numba reads NUMBA_NUM_THREADS when it launches its thread pool and then
+    # refuses to see a different value:
+    #   RuntimeError: Cannot set NUMBA_NUM_THREADS to a different value once
+    #                 the threads have been launched
+    # Anything that imported numba before us (doctor.py probes it in its package
+    # check) has already launched them, so setting the variable here would turn
+    # a tuning nicety into an ImportError for the whole backend. Report what is
+    # already in force instead.
+    if "numba" in sys.modules:
+        try:
+            import numba
+            n = numba.get_num_threads()
+            os.environ.setdefault("OMP_NUM_THREADS", str(n))
+            return (f"{n} threads (numba already imported; its pool was launched "
+                    f"before backend.py, so the cap could not be applied)")
+        except Exception:
+            return "unknown (numba already imported before backend.py)"
+
     try:
         cores = len(os.sched_getaffinity(0))       # respects cgroup/slurm limits
     except AttributeError:
@@ -229,10 +248,25 @@ if BACKEND == "cuda":
     from pyFANTOM.CUDA import (                             # noqa: F401
         StructuredMesh3D, GeneralMesh, StructuredStiffnessKernel,
         UniformStiffnessKernel, GeneralStiffnessKernel, MultiGrid, CG, SPSOLVE,
-        FiniteElement, StructuredFilter3D, GeneralFilter, LocalFilter,
+        FiniteElement, StructuredFilter3D, GeneralFilter,
         MinimumCompliance, PGD, MMA, OC,
     )
-    HAS_LOCAL_FILTER = True
+    # LocalFilter is OPTIONAL and must be imported separately.
+    #
+    # Not every pyFANTOM build ships it, even on CUDA -- the version pip
+    # installs from the repo currently does not, and importing it alongside the
+    # required symbols took the whole process down with
+    #   ImportError: cannot import name 'LocalFilter' from 'pyFANTOM.CUDA'
+    # before a single agent was built. There is already a working fallback for
+    # exactly this case (see HAS_LOCAL_FILTER below and '# LITE 5' in
+    # to_agent_lite.py, which drops to StructuredFilter3D with a mean r_min), so
+    # a missing optional feature must degrade, not abort.
+    try:
+        from pyFANTOM.CUDA import LocalFilter                # noqa: F401
+        HAS_LOCAL_FILTER = True
+    except ImportError:
+        LocalFilter = None
+        HAS_LOCAL_FILTER = False
 else:
     xp = _np                                                # noqa: F401
     from pyFANTOM.CPU import (                              # noqa: F401
@@ -241,7 +275,7 @@ else:
         FiniteElement, StructuredFilter3D, GeneralFilter,
         MinimumCompliance, PGD, MMA, OC,
     )
-    # CUDA-only: pyFANTOM.CPU has no per-element LocalFilter. Callers must fall
+    # pyFANTOM.CPU has never shipped a per-element LocalFilter. Callers fall
     # back to StructuredFilter3D with a scalar r_min.
     LocalFilter = None
     HAS_LOCAL_FILTER = False

@@ -155,8 +155,17 @@ def check_solver():
     # Import backend FIRST: it installs the sksparse stub that makes
     # pyFANTOM.CPU importable without scikit-sparse. Testing pyFANTOM.CPU
     # directly bypasses that and reports a failure the real app would not hit.
+    # This is FATAL, not a warning. app.py and pipeline_lite.py both do a
+    # module-level `import backend`, so if it raises here the server cannot
+    # start at all -- no agent is ever constructed. Reporting it as a WARN
+    # once let a build pass preflight and then die on launch with
+    #   ImportError: cannot import name 'LocalFilter' from 'pyFANTOM.CUDA'
+    # so the check now clears the backend flags it invalidates.
+    backend_ok = False
     try:
         import backend as _b
+        backend_ok = True
+        row(OK, "backend.py", f"imports — selected '{_b.BACKEND}' backend")
         if _b.HAS_SKSPARSE:
             row(OK, "scikit-sparse", "present — CHOLMOD coarse solver available")
         else:
@@ -165,7 +174,10 @@ def check_solver():
                 f"'{_b.COARSE_SOLVER}' (scipy). Fine for this pipeline; install "
                 f"libsuitesparse-dev + scikit-sparse if you specifically want CHOLMOD.")
     except Exception as e:
-        row(WARN, "backend.py", f"could not preload ({type(e).__name__}: {str(e)[:60]})")
+        row(BAD, "backend.py",
+            f"{type(e).__name__}: {str(e)[:80]}\n"
+            f"         app.py imports this at module scope, so the server "
+            f"CANNOT start until it is fixed.")
 
     try:
         CPU = importlib.import_module("pyFANTOM.CPU")
@@ -184,6 +196,13 @@ def check_solver():
             row(WARN, "LocalFilter", "CUDA-only — lite build must use StructuredFilter3D")
     except Exception as e:
         row(BAD, "CPU backend", f"{type(e).__name__}: {str(e)[:90]}")
+
+    # Both paths run *through* backend.py, so neither is usable without it --
+    # even when cupy and pyFANTOM.CPU import perfectly on their own, which is
+    # exactly the case that slipped through before.
+    if not backend_ok:
+        row(BAD, "verdict", "backend.py did not import — no solver path is usable")
+        cuda = cpu = False
 
     return {"cuda": cuda, "cpu": cpu}
 
