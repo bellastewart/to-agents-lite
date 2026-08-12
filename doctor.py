@@ -117,11 +117,29 @@ def check_deps():
 # --------------------------------------------------------------------------- #
 def check_solver():
     head("2. Topology-optimization solver (pyFANTOM)")
+    # A vendored checkout is optional: pip-installed pyFANTOM lives in
+    # site-packages with no such directory. Only add the path if it exists —
+    # then decide by IMPORT, never by directory existence.
     pyf = Path(os.environ.get("PYFANTOM_PATH", REPO_ROOT / "pyFANTOM"))
-    if str(pyf) not in sys.path:
+    if pyf.is_dir() and str(pyf) not in sys.path:
         sys.path.insert(0, str(pyf))
-    if not pyf.exists():
-        row(BAD, "pyFANTOM not found", f"looked in {pyf}; set PYFANTOM_PATH")
+
+    try:
+        import pyFANTOM
+        where = getattr(pyFANTOM, "__file__", "?")
+        row(OK, "pyFANTOM importable", where)
+    except Exception as e:
+        hint = f"vendored copy at {pyf}" if pyf.is_dir() else "no vendored copy on disk"
+        extra = ""
+        if "sksparse" in str(e):
+            extra = ("\n         sksparse is a HARD dependency of pyFANTOM.CPU "
+                     "(solvers/CPU/_solvers.py imports it at module level).\n"
+                     "         fix: apt-get install -y libsuitesparse-dev && "
+                     "pip install scikit-sparse")
+        row(BAD, "pyFANTOM not importable",
+            f"{type(e).__name__}: {str(e)[:90]}\n         ({hint}; "
+            f"pip install 'pyFANTOM @ git+https://github.com/bellastewart/"
+            f"pyFANTOM_TO-Agents' or set PYFANTOM_PATH){extra}")
         return {"cuda": False, "cpu": False}
 
     cuda = cpu = False
