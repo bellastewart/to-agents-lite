@@ -177,9 +177,18 @@ llm_config_TO = {
 # OpenAI-compat endpoint rejects outright ("Unknown name \"schema\""). TOOLS,
 # JSON, MD_JSON and JSON_O1 are all verified working there. Pick a default that
 # matches the provider; an explicit TO_INSTRUCTOR_MODE always wins.
+#
+# OpenRouter gets TOOLS for a different reason: it is an aggregator that proxies
+# to whichever downstream provider is serving the model that minute (gemma-3-27b
+# alone has five). Strict `response_format` support varies across them, while
+# tool-calling is near-universal, so TOOLS is the mode least likely to break
+# when the route changes underneath you. Override if a specific model prefers
+# JSON_SCHEMA:  TO_INSTRUCTOR_MODE=JSON_SCHEMA
 _text_provider = providers.describe_config()["text"].get("provider")
-os.environ.setdefault("TO_INSTRUCTOR_MODE",
-                      "TOOLS" if _text_provider == "gemini" else "JSON_SCHEMA")
+_SAFE_TOOLS_PROVIDERS = {"gemini", "openrouter"}
+os.environ.setdefault(
+    "TO_INSTRUCTOR_MODE",
+    "TOOLS" if _text_provider in _SAFE_TOOLS_PROVIDERS else "JSON_SCHEMA")
 print(f"[pipeline_lite] structured : {_text_provider}/{_structured['model']} "
       f"(instructor mode {os.environ['TO_INSTRUCTOR_MODE']})")
 
