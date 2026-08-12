@@ -6,6 +6,21 @@ from autogen import UserProxyAgent, Agent
 from openai import OpenAI
 import instructor
 
+
+def _instructor_mode():
+    """See agents/pydantic_agent.py — Gemini's OpenAI-compat endpoint rejects
+    JSON_SCHEMA; TOOLS/JSON/MD_JSON/JSON_O1 are verified working there.
+    Default keeps the original behaviour."""
+    import os
+    name = os.environ.get("TO_INSTRUCTOR_MODE", "JSON_SCHEMA").strip().upper()
+    mode = getattr(instructor.Mode, name, None)
+    if mode is None:
+        available = [m for m in dir(instructor.Mode) if m.isupper()]
+        raise ValueError(
+            f"TO_INSTRUCTOR_MODE={name!r} is not a valid instructor mode. "
+            f"Available: {', '.join(sorted(available))}")
+    return mode
+
 # Import all Pydantic models from pydantic_agent
 from agents.pydantic_agent import (
     PydanticStructure,
@@ -453,7 +468,7 @@ Output the revised configuration:"""
             # Use instructor to enforce Pydantic schema (like PydanticAgent)
             create = instructor.patch(
                 create=client.chat.completions.create,
-                mode=instructor.Mode.JSON_SCHEMA,
+                mode=_instructor_mode(),  # LITE: was hardcoded JSON_SCHEMA
             )
             
             # Get Pydantic-validated response

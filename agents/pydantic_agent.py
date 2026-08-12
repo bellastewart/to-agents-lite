@@ -1,4 +1,28 @@
 import instructor
+
+
+def _instructor_mode():
+    """Structured-output strategy, selectable per provider.
+
+    LITE: the original hardcoded ``instructor.Mode.JSON_SCHEMA``. That works on
+    Together but Google's OpenAI-compat endpoint rejects it — it does not accept
+    the ``response_format.schema`` field instructor sends, returning
+    ``Unknown name "schema" at 'response_format'``. Verified working on Gemini:
+    TOOLS, JSON, MD_JSON, JSON_O1.
+
+    Default stays JSON_SCHEMA so behaviour is unchanged unless asked; set
+    TO_INSTRUCTOR_MODE=TOOLS to run structured output on Gemini and drop the
+    second API key entirely.
+    """
+    import os
+    name = os.environ.get("TO_INSTRUCTOR_MODE", "JSON_SCHEMA").strip().upper()
+    mode = getattr(instructor.Mode, name, None)
+    if mode is None:
+        available = [m for m in dir(instructor.Mode) if m.isupper()]
+        raise ValueError(
+            f"TO_INSTRUCTOR_MODE={name!r} is not a valid instructor mode. "
+            f"Available: {', '.join(sorted(available))}")
+    return mode
 # from Reasoning import make_structure_from_text
 from typing import List, Dict, Optional, Literal, Union, Any
 import numpy as np
@@ -241,7 +265,7 @@ class PydanticAgent(UserProxyAgent):
     
         create = instructor.patch(
             create=client.chat.completions.create,
-            mode=instructor.Mode.JSON_SCHEMA,
+            mode=_instructor_mode(),  # LITE: was hardcoded JSON_SCHEMA
         )
     
         return create(

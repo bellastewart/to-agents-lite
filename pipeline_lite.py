@@ -62,10 +62,22 @@ if _dotenv_loaded:
 os.environ.setdefault("AUTOGEN_CACHE_DIR", str(REPO_ROOT / ".cache"))
 os.environ["AUTOGEN_USE_DOCKER"] = "False"
 
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+# Order matters: whichever is inserted LAST wins. When this checkout has its own
+# agents/ package, it must take precedence — otherwise a stale TO_AGENTS_ROOT
+# (e.g. inherited from a .env copied out of another checkout) silently imports a
+# DIFFERENT agents/ and you debug code that is not the code you edited.
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+if (HERE / "agents").is_dir():
+    while str(HERE) in sys.path:
+        sys.path.remove(str(HERE))
+    sys.path.insert(0, str(HERE))
+    if REPO_ROOT != HERE and (REPO_ROOT / "agents").is_dir():
+        print(f"[pipeline_lite] NOTE: TO_AGENTS_ROOT={REPO_ROOT} also has an "
+              f"agents/ package; using the local one at {HERE}/agents. "
+              f"Unset TO_AGENTS_ROOT if that is not what you want.")
+elif str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
 MAX_TO_RUNS = int(os.environ.get("TO_MAX_RUNS", "5"))
 
@@ -137,23 +149,39 @@ class _LLM:
 generate = _LLM(_text).generate_cli
 
 # --------------------------------------------------------------------------- #
-# Together — structured output (already hosted; unchanged from the full build)
+# Structured output — this is the role that actually does the JSON work
 # --------------------------------------------------------------------------- #
-from together import Together                                    # noqa: E402
-
-_TOGETHER_KEY = os.environ.get("Llama4_together") or os.environ.get("TOGETHER_API_KEY", "")
-config_list_TO = [{
-    "model": os.environ.get("TO_STRUCTURED_MODEL",
-                            "meta-llama/Llama-3.3-70B-Instruct-Turbo"),
-    "api_key_TO": _TOGETHER_KEY,
-    "max_tokens": 20000,
-}]
-client_TO = Together(api_key=config_list_TO[0]["api_key_TO"])
+# Worth being precise, because the naming in the original is misleading:
+#
+#   llm_config     (Qwen2.5-VL-7B, :8000)  -> consumed ONLY by vllm_agent_both,
+#                                             i.e. it is the VISION config
+#   llm_config_TO  (Llama-3.3-70B)         -> consumed by pydantic_agent and
+#                                             revise_agent via instructor; this
+#                                             is what turns prose into validated
+#                                             JSON and revises it
+#   generate       (_LLM wrapper)          -> stored on both agents and NEVER
+#                                             CALLED. Dead in the original too.
+#
+# So `TO_TEXT_*` drives this client — the real text path — not `generate`.
+# Any OpenAI-compatible client works: the agents only touch
+# `client.chat.completions.create`.
+_structured = providers.openai_compat("text")
+client_TO = OpenAI(api_key=_structured["api_key"], base_url=_structured["base_url"])
 llm_config_TO = {
     "client_TO": client_TO,
-    "model_TO": config_list_TO[0]["model"],
-    "max_tokens_TO": config_list_TO[0]["max_tokens"],
+    "model_TO": _structured["model"],
+    "max_tokens_TO": int(os.environ.get("TO_STRUCTURED_MAX_TOKENS", "20000")),
 }
+
+# instructor's JSON_SCHEMA mode sends `response_format.schema`, which Google's
+# OpenAI-compat endpoint rejects outright ("Unknown name \"schema\""). TOOLS,
+# JSON, MD_JSON and JSON_O1 are all verified working there. Pick a default that
+# matches the provider; an explicit TO_INSTRUCTOR_MODE always wins.
+_text_provider = providers.describe_config()["text"].get("provider")
+os.environ.setdefault("TO_INSTRUCTOR_MODE",
+                      "TOOLS" if _text_provider == "gemini" else "JSON_SCHEMA")
+print(f"[pipeline_lite] structured : {_text_provider}/{_structured['model']} "
+      f"(instructor mode {os.environ['TO_INSTRUCTOR_MODE']})")
 
 # --------------------------------------------------------------------------- #
 # Agents — unmodified classes from agents/, except the backend-switchable TO one
