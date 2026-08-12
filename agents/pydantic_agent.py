@@ -28,7 +28,17 @@ from typing import List, Dict, Optional, Literal, Union, Any
 import numpy as np
 from datetime import datetime
 import time
-import torch
+try:
+    import torch
+except ImportError:
+    # LITE: torch is used exactly once in this file — `with torch.no_grad():`
+    # around make_structure_from_text, which is a remote API call. There is no
+    # local model and no tensor, so the context manager is a no-op. Colab ships
+    # torch preinstalled and never hits this, but requiring a ~2 GB download for
+    # a no-op would make the CPU install absurd. Substitute a null context.
+    import contextlib as _contextlib
+    import types as _types
+    torch = _types.SimpleNamespace(no_grad=_contextlib.nullcontext)
 import json
 import os
 from pydantic import BaseModel

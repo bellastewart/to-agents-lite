@@ -1,33 +1,50 @@
-# TO-Agents Lite — CPU-only dependency set.
+# TO-Agents Lite — CPU-only dependency set. Everything here installs from
+# wheels; nothing compiles.
 #
-# Deliberately NO cupy here: this file must install on a machine with no GPU.
-# For a GPU (Colab/Kaggle T4, or your own), add the CUDA extra afterwards:
+# Two deliberate omissions:
 #
-#     pip install cupy-cuda12x        # match your CUDA major version
+#   cupy          GPU only. Add separately if you have one:
+#                     pip install cupy-cuda12x       # match your CUDA major version
 #
-# scikit-sparse needs SuiteSparse headers present BEFORE pip runs:
-#     Debian/Ubuntu/Colab:  sudo apt-get install -y libsuitesparse-dev
-#     macOS:                brew install suite-sparse
+#   scikit-sparse OPTIONAL, and deliberately NOT listed. It is source-only on
+#                 PyPI (no wheels for any Python version) and compiles against
+#                 SuiteSparse, so a missing cholmod.h aborts the whole install.
+#                 pyFANTOM declares it as a hard dependency and imports it at
+#                 module level, so install pyFANTOM with --no-deps:
+#
+#                     pip install -r requirements-lite.txt
+#                     pip install --no-deps "pyFANTOM @ git+https://github.com/bellastewart/pyFANTOM_TO-Agents"
+#
+#                 backend.py stubs the import and switches MultiGrid's coarse
+#                 solver to scipy's 'splu'. Verified working with scikit-sparse
+#                 entirely absent. To use CHOLMOD instead:
+#                     apt-get install -y libsuitesparse-dev && pip install scikit-sparse
 
-# --- the topology-optimization engine -------------------------------------- #
-# Public repo; the CPU backend (pyFANTOM.CPU) needs no GPU.
-pyFANTOM @ git+https://github.com/bellastewart/pyFANTOM_TO-Agents
-
-# --- numerics --------------------------------------------------------------- #
+# --- pyFANTOM's own runtime deps (listed explicitly, since we skip its metadata)
 numpy
 scipy
 numba                 # JIT kernels — this is what makes the CPU backend viable
-scikit-sparse
 sympy
+pygmsh
+tqdm
 
-# --- multi-agent layer ------------------------------------------------------ #
-pyautogen
+# --- numerics / agents ------------------------------------------------------ #
+# The classic autogen API (UserProxyAgent / GroupChat / GroupChatManager) that
+# these agents use comes from autogen-agentchat 0.2.x. Do NOT use `pyautogen`:
+# on Python 3.12 it resolves to the 0.4+ rewrite (autogen-core), which does not
+# provide that API at all and fails with ModuleNotFoundError: autogen.
+autogen-agentchat==0.2.40
+# 0.2.40 pulls flaml, which requires numpy<2. Install everything in ONE pip
+# resolution pass so scipy is matched to that numpy; installing piecemeal gives
+# a scipy built for numpy 2.x and "module 'numpy' has no attribute 'long'".
+numpy<2
 pydantic>=2
+instructor
 nest_asyncio
 
 # --- model providers -------------------------------------------------------- #
 openai                # also used for Gemini via its OpenAI-compat endpoint
-together
+together              # optional provider; the SDK itself is a small pure wheel
 google-genai          # ai_judge's gemini backend (NOT google-generativeai, which is EOL)
 requests
 python-dotenv
@@ -40,8 +57,6 @@ playwright            # then: playwright install chromium
 matplotlib
 plotly
 pillow
-pygmsh
-tqdm
 
 # --- web server ------------------------------------------------------------- #
 fastapi

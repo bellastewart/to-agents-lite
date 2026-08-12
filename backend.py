@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as _np
 
 __all__ = ["BACKEND", "xp", "to_numpy", "HAS_LOCAL_FILTER", "describe",
+           "HAS_SKSPARSE", "COARSE_SOLVER",
            "StructuredMesh3D", "GeneralMesh", "StructuredStiffnessKernel",
            "UniformStiffnessKernel", "GeneralStiffnessKernel", "MultiGrid", "CG",
            "SPSOLVE", "FiniteElement", "StructuredFilter3D", "GeneralFilter",
@@ -75,6 +76,59 @@ if str(_REPO_ROOT) not in sys.path:
 # deliberately conservative: a shared login-node GPU often has a few hundred MiB
 # free, which passes a toy allocation and then dies on the first real solve.
 MIN_VRAM_MB = float(os.environ.get("TO_MIN_VRAM_MB", "3072"))
+
+
+def _ensure_sksparse() -> bool:
+    """Make pyFANTOM importable even when scikit-sparse is missing.
+
+    ``pyFANTOM/solvers/CPU/_solvers.py`` does a MODULE-LEVEL
+    ``from sksparse.cholmod import cholesky``, re-exported by
+    ``solvers/CPU/__init__.py``. So without scikit-sparse, ``import pyFANTOM.CPU``
+    fails outright — the entire CPU backend is unreachable.
+
+    scikit-sparse is source-only on PyPI (no wheels, any Python) and compiles
+    against SuiteSparse; ``cholmod.h`` missing is the single most common install
+    failure. But CHOLMOD is only ever used as a MultiGrid *coarse* solver, and
+    ``splu``/``spsolve`` are pure-scipy alternatives.
+
+    So when the real package is absent we register a stub that satisfies the
+    import and raises only if CHOLMOD is genuinely invoked — and
+    ``to_agent_lite`` then selects a scipy coarse solver instead.
+
+    Returns True if the real scikit-sparse is present.
+    """
+    try:
+        import sksparse.cholmod  # noqa: F401
+        return True
+    except Exception:
+        pass
+
+    import types
+
+    def _cholesky(*_a, **_k):
+        raise RuntimeError(
+            "CHOLMOD was requested but scikit-sparse is not installed. "
+            "Either install it (needs SuiteSparse headers: "
+            "`apt-get install -y libsuitesparse-dev && pip install scikit-sparse`) "
+            "or use a scipy coarse solver, e.g. MultiGrid(..., coarse_solver='splu')."
+        )
+
+    pkg = types.ModuleType("sksparse")
+    pkg.__path__ = []                      # mark as a package
+    chol = types.ModuleType("sksparse.cholmod")
+    chol.cholesky = _cholesky
+    chol.analyze = _cholesky
+    pkg.cholmod = chol
+    sys.modules.setdefault("sksparse", pkg)
+    sys.modules.setdefault("sksparse.cholmod", chol)
+    return False
+
+
+HAS_SKSPARSE = _ensure_sksparse()
+# Coarse solver for MultiGrid. pyFANTOM defaults to 'cholmod', which is exactly
+# the thing that may not exist; fall back to scipy's sparse LU when it doesn't.
+COARSE_SOLVER = os.environ.get(
+    "TO_COARSE_SOLVER", "cholmod" if HAS_SKSPARSE else "splu").strip()
 
 
 def _cuda_usable() -> tuple[bool, str]:
@@ -213,6 +267,7 @@ def suggest_mesh(default=(128, 64, 64)) -> tuple[tuple[int, int, int], str]:
 def describe() -> dict:
     mesh, why = suggest_mesh()
     return {"backend": BACKEND, "requested": _requested, "detection": _REASON,
+            "has_sksparse": HAS_SKSPARSE, "coarse_solver": COARSE_SOLVER,
             "array_module": xp.__name__, "local_filter": HAS_LOCAL_FILTER,
             "free_vram_mb": free_vram_mb(),
             "suggested_mesh": {"nx": mesh[0], "ny": mesh[1], "nz": mesh[2],

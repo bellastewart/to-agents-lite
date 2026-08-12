@@ -152,6 +152,21 @@ def check_solver():
     except Exception as e:
         row(WARN, "CUDA backend", f"unavailable ({type(e).__name__}) — CPU fallback required")
 
+    # Import backend FIRST: it installs the sksparse stub that makes
+    # pyFANTOM.CPU importable without scikit-sparse. Testing pyFANTOM.CPU
+    # directly bypasses that and reports a failure the real app would not hit.
+    try:
+        import backend as _b
+        if _b.HAS_SKSPARSE:
+            row(OK, "scikit-sparse", "present — CHOLMOD coarse solver available")
+        else:
+            row(WARN, "scikit-sparse",
+                f"absent — stubbed; MultiGrid coarse solver falls back to "
+                f"'{_b.COARSE_SOLVER}' (scipy). Fine for this pipeline; install "
+                f"libsuitesparse-dev + scikit-sparse if you specifically want CHOLMOD.")
+    except Exception as e:
+        row(WARN, "backend.py", f"could not preload ({type(e).__name__}: {str(e)[:60]})")
+
     try:
         CPU = importlib.import_module("pyFANTOM.CPU")
         needed = ["StructuredMesh3D", "GeneralMesh", "StructuredStiffnessKernel",
@@ -290,7 +305,10 @@ def verdict(solver, renderer, models):
         return 0
     print(f"  {R}Nothing runnable.{X}  Most likely fix, in order:")
     if not solver["cpu"] and not solver["cuda"]:
-        print("    - pyFANTOM not importable: set PYFANTOM_PATH")
+        print("    - no usable pyFANTOM backend. If pyFANTOM imported but the CPU")
+        print("      backend did not, the usual cause is scikit-sparse: either")
+        print("      `apt-get install -y libsuitesparse-dev && pip install scikit-sparse`,")
+        print("      or make sure backend.py is importable so its stub can load.")
     if not renderer:
         print("    - install the renderer: pip install playwright && playwright install chromium")
     if not have_vision:

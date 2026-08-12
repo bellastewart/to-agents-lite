@@ -71,6 +71,8 @@ from backend import (
     OC,
     BACKEND,
     HAS_LOCAL_FILTER,
+    HAS_SKSPARSE,
+    COARSE_SOLVER,
     to_numpy as _to_numpy,
     xp as _xp,
 )
@@ -400,6 +402,15 @@ class TOAgentBoth(UserProxyAgent):
         mesh_params.pop("physics", None)
         mesh = StructuredMesh3D(**mesh_params, physics=physics)
         kernel = StructuredStiffnessKernel(mesh=mesh)
+        # LITE 7: pyFANTOM's MultiGrid defaults to coarse_solver='cholmod',
+        # which needs scikit-sparse. That package is source-only and frequently
+        # fails to build, so fall back to scipy's sparse LU when it is absent.
+        # An explicit coarse_solver in the config always wins.
+        multigrid_params.setdefault("coarse_solver", COARSE_SOLVER)
+        if not HAS_SKSPARSE and multigrid_params["coarse_solver"] == "cholmod":
+            print("   \u26a0\ufe0f  coarse_solver='cholmod' requested but scikit-sparse is "
+                  "missing; using 'splu' instead.")
+            multigrid_params["coarse_solver"] = "splu"
         solver = MultiGrid(kernel=kernel, mesh=mesh, **multigrid_params)
         FE = FiniteElement(mesh=mesh, kernel=kernel, solver=solver)
     
