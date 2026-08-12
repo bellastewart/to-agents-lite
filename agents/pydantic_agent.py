@@ -41,7 +41,7 @@ except ImportError:
     torch = _types.SimpleNamespace(no_grad=_contextlib.nullcontext)
 import json
 import os
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from IPython import get_ipython
 from agents.Reasoning.structure_generation import make_structure_from_text
 from autogen import UserProxyAgent, Agent
@@ -117,7 +117,24 @@ class Filter(BaseModel):
     # (HiTop-style local minimum length scale). Practically the LLM will
     # almost always emit a scalar — per-element arrays are intended for
     # programmatic setup (notebook cell, helper script).
-    r_min: Union[float, List[float]]
+    # LITE: units made explicit. r_min is measured in ELEMENTS, not in the
+    # mesh's physical units. Nothing previously said so -- neither this schema
+    # nor the prompt, whose only example was "filter radius of 2.0 -> 2.0" --
+    # so given a problem stated in metres ("a 1 m long beam") the model
+    # reasonably emitted r_min: 0.05 as a physical length. On a 20-element span
+    # that is 1/20th of one element, i.e. no filtering at all, which produces
+    # checkerboarding, diverges the multigrid solver, and yields
+    # objective = nan on the first iteration with the run reported as a success.
+    r_min: Union[float, List[float]] = Field(
+        ...,
+        description=(
+            "Density filter radius in ELEMENT WIDTHS, not physical units. "
+            "Typical values are 1.5 to 3.0. It must be at least 1.0 or the "
+            "filter does nothing and the optimisation goes unstable. Do NOT "
+            "convert from metres: on a 1 m beam meshed into 20 elements, a "
+            "filter spanning 2 elements is r_min=2.0, never 0.1."
+        ),
+    )
 
 
 class Problem(BaseModel):
@@ -175,7 +192,7 @@ Always return valid JSON with the following structure:
   "bc": [...],
   "forces": [...],
   "filter": {
-    "r_min": float 
+    "r_min": float  // filter radius in ELEMENT WIDTHS (>=1.0, typically 1.5-3.0), NOT metres
   },
   "problem": {
     "type": "MinimumCompliance",
@@ -202,7 +219,9 @@ Rules:
 - The axis rule should be diag if its a diagonal instead of x,y,z directions. 
 
 - For filter:
-    - Extract r_min (filter radius) if mentioned
+    - Extract r_min (filter radius, in ELEMENT WIDTHS) if mentioned; if not
+      mentioned use 1.5. Never derive it from a physical length — a value
+      below 1.0 disables the filter and the optimisation diverges to NaN.
 - For problem:
     - Extract void material stiffness if mentioned 
     - Extract SIMP penalty if mentioned 
@@ -214,7 +233,7 @@ Rules:
     - change_tol should be null (infinity) unless explicitly specified
     - fun_tol (function tolerance) default is 1e-4
 - Example interpretations:
-    - "filter radius of 2.0" → r_min: 2.0
+    - "filter radius of 2.0" → r_min: 2.0   (element widths, not metres)
     - "20% volume fraction" → volume_fraction: [0.2]
     - "volume fraction of 0.3" → volume_fraction: [0.3]
     - "SIMP penalty of 3" → penalty: 3.0

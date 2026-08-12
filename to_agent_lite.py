@@ -427,6 +427,40 @@ class TOAgentBoth(UserProxyAgent):
         # list r_min => LocalFilter for per-element minimum length scale.
         filter_params = TO_results.get("filter", {"r_min": 1.5})
         r_min_val = filter_params["r_min"]
+
+        # LITE 9: guard against a sub-element filter radius.
+        #
+        # r_min is in ELEMENT WIDTHS. The schema never said so, so given a
+        # problem phrased in metres the model emitted r_min=0.05 for a 1 m beam
+        # -- 1/20th of one element, i.e. no filtering. Measured consequence on a
+        # 20x10x10 mesh: checkerboarding diverges the multigrid solve and the
+        # objective is nan from the first iteration, while the run still reports
+        # "Optimization complete" and renders screenshots of noise.
+        #
+        #   n_level=1  r_min=0.05  ->  ok   (objective 0.307)
+        #   n_level=2  r_min=0.05  ->  NaN at iteration 2
+        #   n_level=3  r_min=0.05  ->  NaN at iteration 1
+        #   n_level=2  r_min=1.5   ->  ok   (objective 31.1)
+        #
+        # The schema and prompt now state the units, but a prompt is a request,
+        # not a guarantee, so clamp here too. Silently accepting the value costs
+        # a full run and yields NaN; silently clamping would change the problem
+        # without telling anyone -- so clamp loudly.
+        _R_MIN_FLOOR = 1.0
+        _scalars = ([float(v) for v in r_min_val]
+                    if isinstance(r_min_val, (list, tuple)) else [float(r_min_val)])
+        if _scalars and min(_scalars) < _R_MIN_FLOOR:
+            print(f"   ⚠️  r_min={min(_scalars):g} is below one element width. "
+                  f"r_min is measured in ELEMENTS, not physical units, and a "
+                  f"sub-element radius disables the density filter — which "
+                  f"causes checkerboarding and an objective of NaN. Raising it "
+                  f"to {_R_MIN_FLOOR + 0.5:g}. If you meant a physical length, "
+                  f"divide it by the element size (lx/nx).")
+            if isinstance(r_min_val, (list, tuple)):
+                r_min_val = [max(float(v), _R_MIN_FLOOR + 0.5) for v in r_min_val]
+            else:
+                r_min_val = _R_MIN_FLOOR + 0.5
+            filter_params = dict(filter_params, r_min=r_min_val)
         if isinstance(r_min_val, (list, tuple)):
             # LITE 5: LocalFilter is CUDA-only (pyFANTOM.CPU does not define it).
             # On CPU, collapse the per-element radii to their mean and use the
