@@ -431,5 +431,5 @@ async def run(request: Request):
 if __name__ == "__main__":
     import uvicorn
     host = os.environ.get("TO_WEB_HOST", "0.0.0.0")
-    port = int(os.environ.get("TO_WEB_PORT", "8080"))
+    port = int(os.environ.get("TO_WEB_PORT", "8765"))
     uvicorn.run(app, host=host, port=port, log_level="info")

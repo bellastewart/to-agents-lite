@@ -55,7 +55,7 @@ playwright install chromium
 cp .env.example .env && chmod 600 .env          # then paste your Gemini key in
 
 python doctor.py                                # <- ALWAYS run this first
-python app.py                                   # http://localhost:8080
+python app.py                                   # http://localhost:8765
 ```
 
 ### Two checks, in order
