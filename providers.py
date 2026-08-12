@@ -215,8 +215,18 @@ class GeminiBackend(Backend):
             raise ProviderError(
                 f"gemini/{self.model}: no candidates in response {r.text[:200]}") from e
 
-        text = "".join(p.get("text", "")
-                       for p in cand.get("content", {}).get("parts", []) or []).strip()
+        # Gemini 3.x and the Gemma-4 models return their reasoning as parts
+        # flagged `thought: true`, interleaved with the answer. Concatenating
+        # everything hands the caller the chain-of-thought as if it were the
+        # reply — for the judge that means its score text is prefixed with
+        # "The user wants me to...". Keep only the non-thought parts.
+        parts_out = cand.get("content", {}).get("parts", []) or []
+        text = "".join(p.get("text", "") for p in parts_out
+                       if not p.get("thought")).strip()
+        if not text:
+            # Some responses carry the answer only inside thought parts; better
+            # to return that than nothing, but it is worth knowing about.
+            text = "".join(p.get("text", "") for p in parts_out).strip()
 
         if cand.get("finishReason") == "MAX_TOKENS":
             usage = payload.get("usageMetadata", {})
@@ -305,7 +315,13 @@ PROVIDERS = {
                                "TOGETHER_API_KEY", "Llama4_together"),
     "openai":   _openai_compat("openai",   "https://api.openai.com/v1", "OPENAI_API_KEY"),
     "hf":       _openai_compat("hf",       "https://router.huggingface.co/v1",
-                               "HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"),
+                               "HF_TOKEN", "HF_KEY", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"),
+    # OpenRouter aggregates ~410 models behind one key. Models suffixed ":free"
+    # cost nothing but are rate-limited and can be retired without notice --
+    # `qwen/qwen2.5-vl-72b-instruct:free` was withdrawn and is now paid-only, at
+    # a price low enough (~$0.0005 per two-image call) that it hardly matters.
+    "openrouter": _openai_compat("openrouter", "https://openrouter.ai/api/v1",
+                                 "OPENROUTER_API_KEY", "OPENROUTER_KEY"),
     # hosted, bespoke schema
     "gemini":    lambda model, base_url="", **kw: GeminiBackend(
         model, base_url, _first_env("GEMINI_API_KEY", "GOOGLE_API_KEY"), **kw),
@@ -372,8 +388,9 @@ _OPENAI_COMPAT_BASE = {
     "ollama":   "http://localhost:11434/v1",
     "together": "https://api.together.xyz/v1",
     "openai":   "https://api.openai.com/v1",
-    "hf":       "https://router.huggingface.co/v1",
-    "gemini":   "https://generativelanguage.googleapis.com/v1beta/openai/",
+    "hf":         "https://router.huggingface.co/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "gemini":     "https://generativelanguage.googleapis.com/v1beta/openai/",
 }
 
 
@@ -399,9 +416,10 @@ def openai_compat(role: str) -> dict:
     # vllm/ollama are unauthenticated; the OpenAI SDK still wants a non-empty key.
     key_lookup = {
         "together": ("TOGETHER_API_KEY", "Llama4_together"),
-        "openai":   ("OPENAI_API_KEY",),
-        "hf":       ("HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"),
-        "gemini":   ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+        "openai":     ("OPENAI_API_KEY",),
+        "hf":         ("HF_TOKEN", "HF_KEY", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"),
+        "openrouter": ("OPENROUTER_API_KEY", "OPENROUTER_KEY"),
+        "gemini":     ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     }.get(provider, ())
     return {"model": model, "base_url": base_url,
             "api_key": _first_env(*key_lookup) or "NULL"}

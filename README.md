@@ -92,10 +92,49 @@ messages name the fix. Run it before opening an issue.
 
 ---
 
+## Two tiers
+
+Pick one at the top of the notebook. Both give the three roles **three different
+models** — the judge scores what the vision agent described, so shared weights
+would mean shared blind spots.
+
+| | **Free** | **Plus** |
+|---|---|---|
+| keys | 1 — `GEMINI_API_KEY` | 1 — `OPENROUTER_API_KEY` |
+| payment method | **no** | yes |
+| structured output | `gemini-3.5-flash-lite` | `meta-llama/llama-3.3-70b-instruct` |
+| vision | `gemini-3-flash-preview` | `qwen/qwen3-vl-32b-instruct` |
+| judge | `gemma-4-31b-it` | `google/gemma-3-27b-it` |
+| cost | $0 | ~$0.002/run (~450 runs per $1) |
+| limit | 20 req/day **per model** ⇒ ~6–10 runs/day | none |
+
+**Free** leans on the fact that Gemini's free quota is per *model*, so three
+roles on three models get three independent budgets instead of sharing one.
+`gemma-4-31b-it` is served on the same key with its own quota.
+
+**Plus** reproduces the 4-GPU build: structured output and judge are the *exact*
+models it used. Only vision is substituted, because `Qwen2.5-VL-7B` is served by
+exactly one provider anywhere (featherless-ai) and a single point of failure is
+a poor default. `qwen3-vl-32b-instruct` is the same VL family, one generation
+newer and ~4.5× larger.
+
+`auto` picks Plus when an OpenRouter key is present, else Free.
+
+> **Measured vs. assumed.** `gemma-4-31b-it` is the only vision-capable model
+> here validated on real renders — correct in both image orders on a pair with
+> numeric ground truth from the density field. Every model in **Plus** was
+> chosen on availability and price and has *not* been measured on this task.
+
+Optional, never required: `TOGETHER_API_KEY` sends structured output direct to
+the endpoint the full build used; `HF_KEY` runs vision on the literal
+`Qwen2.5-VL-7B` weights.
+
+Run `python tiers.py` to print both tiers and which keys you have.
+
 ## Configuration
 
-Every model role is independently pointable at any provider. See `.env.example`
-for the full list; the essentials:
+Every model role is independently pointable at any provider, and the tiers are
+just presets over these. See `.env.example` for the full list; the essentials:
 
 | Variable | Meaning |
 |---|---|
