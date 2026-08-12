@@ -40,7 +40,60 @@ from __future__ import annotations
 import os
 
 __all__ = ["TIERS", "TIER_ORDER", "apply_tier", "detect_tier", "describe_tier",
-           "missing_keys"]
+           "missing_keys", "KEY_ALIASES", "normalise_keys"]
+
+
+# Colab Secrets names are case-sensitive and people name them whatever reads
+# naturally ("Openrouter", "GeminiKey"). Requiring an exact spelling produces a
+# "no usable key found" error while the key is sitting right there, which is a
+# miserable first experience. Accept the obvious spellings and normalise.
+KEY_ALIASES = {
+    "GEMINI_API_KEY": [
+        "GEMINI_API_KEY", "GEMINI", "Gemini", "GeminiKey", "GEMINI_KEY",
+        "GOOGLE_API_KEY", "GOOGLE_AI_API_KEY",
+    ],
+    "OPENROUTER_API_KEY": [
+        "OPENROUTER_API_KEY", "OPENROUTER", "Openrouter", "OpenRouter",
+        "openrouter", "OPENROUTER_KEY", "OpenRouterKey", "OPEN_ROUTER_API_KEY",
+    ],
+    "TOGETHER_API_KEY": [
+        "TOGETHER_API_KEY", "TOGETHER", "Together", "TogetherKey",
+        "TOGETHER_KEY", "Llama4_together",
+    ],
+    "HF_KEY": [
+        "HF_KEY", "HF_TOKEN", "HuggingFace", "HUGGINGFACE_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN", "HF", "Hf_key",
+    ],
+}
+
+
+def normalise_keys(lookup=None) -> dict:
+    """Find each known key under any accepted alias and set the canonical name.
+
+    `lookup` is a callable taking a name and returning a value or "" — pass one
+    that reads Colab Secrets to cover secrets as well as the environment.
+    Returns {canonical_name: alias_it_was_found_under} for what was resolved.
+    """
+    found = {}
+    for canonical, aliases in KEY_ALIASES.items():
+        if os.environ.get(canonical, "").strip():
+            found[canonical] = canonical
+            continue
+        for alias in aliases:
+            value = os.environ.get(alias, "").strip()
+            if not value and lookup is not None:
+                try:
+                    value = (lookup(alias) or "").strip()
+                except Exception:
+                    value = ""
+            if value:
+                os.environ[canonical] = value
+                found[canonical] = alias
+                break
+    # providers.py reads HF_TOKEN as well; keep the pair in sync.
+    if os.environ.get("HF_KEY"):
+        os.environ.setdefault("HF_TOKEN", os.environ["HF_KEY"])
+    return found
 
 
 TIERS = {
