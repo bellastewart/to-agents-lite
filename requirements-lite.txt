@@ -3,8 +3,11 @@
 #
 # Two deliberate omissions:
 #
-#   cupy          GPU only. Add separately if you have one:
-#                     pip install cupy-cuda12x       # match your CUDA major version
+#   cupy          GPU only. Add separately if you have one, and PIN IT <14:
+#                     pip install 'cupy-cuda12x<14'
+#                 14.x requires numpy>=2.0, which conflicts with
+#                 autogen-agentchat 0.2.40 (numpy<2) and numba. 13.6.0 accepts
+#                 numpy<2.6,>=1.22 and is the combination known to work.
 #
 #   scikit-sparse OPTIONAL, and deliberately NOT listed. It is source-only on
 #                 PyPI (no wheels for any Python version) and compiles against
