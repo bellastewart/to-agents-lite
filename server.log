@@ -11,8 +11,7 @@
 🔧 VLLMAgentBoth initialized for problem type: PHONE
 [pipeline_lite] judge wired : gemini/gemma-4-31b-it
 [app] pipeline ready.
-INFO:     Started server process [1785162]
+INFO:     Started server process [2095036]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8797 (Press CTRL+C to quit)
-INFO:     127.0.0.1:58706 - "GET / HTTP/1.1" 200 OK
+INFO:     Uvicorn running on http://0.0.0.0:8798 (Press CTRL+C to quit)

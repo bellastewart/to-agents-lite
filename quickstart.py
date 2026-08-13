@@ -89,7 +89,20 @@ def install():
     if run(["nvidia-smi"]).returncode == 0:
         run([sys.executable, "-m", "pip", "install", "-q", "cupy-cuda12x<14"])
 
-    run([sys.executable, "-m", "playwright", "install", "chromium"])
+    # --with-deps, NOT plain install. `playwright install chromium` fetches the
+    # browser binary but none of its shared libraries, so on an image that
+    # lacks them the download succeeds and the browser cannot start:
+    #     chrome-headless-shell: error while loading shared libraries:
+    #     libatk-1.0.so.0: cannot open shared object file
+    # which surfaces much later as a Playwright TargetClosedError, after a full
+    # optimization has already run. Colab images vary in what they ship, so
+    # this cannot be assumed.
+    p = run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"])
+    if p.returncode != 0:
+        # --with-deps needs root for apt; fall back so a non-root machine still
+        # gets the browser rather than nothing.
+        run([sys.executable, "-m", "playwright", "install", "chromium"])
+        print("(browser deps may be incomplete) ", end="", flush=True)
     ok()
 
 
@@ -179,6 +192,7 @@ def tunnel() -> str | None:
     subprocess.Popen([binary, "tunnel", "--url", f"http://localhost:{PORT}"],
                      stdout=open(CF_LOG, "w"), stderr=subprocess.STDOUT,
                      start_new_session=True)          # outlive this script too
+    host_url = None
     for _ in range(45):
         time.sleep(1)
         try:
@@ -187,9 +201,44 @@ def tunnel() -> str | None:
         except FileNotFoundError:
             continue
         if m:
-            ok()
-            return m.group(0)
-    fail("The public link did not come up.", Path(CF_LOG).read_text())
+            host_url = m.group(0)
+            break
+    if host_url is None:
+        fail("The public link did not come up.", Path(CF_LOG).read_text())
+
+    # Do NOT hand over the URL until the name actually resolves.
+    #
+    # cloudflared prints the hostname as soon as it registers it, but public DNS
+    # takes another 10-30s to carry it. Opening it in that window gets NXDOMAIN
+    # -- and resolvers CACHE negative answers, macOS notably so. The link is
+    # then dead on that machine indefinitely while the server is perfectly
+    # healthy, and the only cure is a cache flush no visitor would ever guess:
+    #     sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder
+    #
+    # Observed exactly this: `dig` (which skips the cache) returned the
+    # Cloudflare IPs while Safari and curl both said the host did not exist.
+    #
+    # So poll until it resolves, and only then print it. Ten quiet seconds here
+    # is worth far more than a link that fails once and stays failed.
+    import socket as _socket
+    host = host_url.split("://", 1)[1]
+    for attempt in range(40):
+        try:
+            _socket.getaddrinfo(host, 443)
+            ok(f"(DNS live after {attempt + 1}s)" if attempt else "")
+            return host_url
+        except _socket.gaierror:
+            time.sleep(1)
+
+    # Still not resolving after 40s. Hand it over anyway -- it will almost
+    # certainly work shortly -- but say what to do rather than let it look
+    # broken.
+    ok("(DNS still propagating)")
+    print("\n  NOTE: the hostname has not propagated yet. Wait ~30 seconds "
+          "before opening it.\n  If your browser then says it cannot find the "
+          "server, that is a cached DNS miss —\n  on macOS clear it with:\n"
+          "      sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder")
+    return host_url
 
 
 def main():
