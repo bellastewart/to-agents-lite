@@ -320,6 +320,33 @@ class TOAgentBoth(UserProxyAgent):
             # Divide by number of nodes if requested
             if divide_by_num_nodes:
                 force_vec = force_vec / len(node_ids)
+            elif len(node_ids) > 1:
+                # LITE 13: the single highest-impact misconfiguration observed.
+                #
+                # With divide_by_num_nodes false, EVERY selected node receives
+                # the full vector, so a stated total load is silently multiplied
+                # by the node count. Asked for "a 1 kN downward load", the agent
+                # selected 11 nodes and left this false -> 11 kN applied.
+                #
+                # It is not merely wrong physics, it destabilises the solvers.
+                # Measured on a 24x12x12 mesh, E=1.0, r_min=1.5, target vf=0.4:
+                #   divide=True   PGD/OC/MMA  all reach vf=0.4000, std~0.47
+                #   divide=False  MMA         vf=1.0000 (constraint ignored)
+                #   divide=False  MMA + SI E  ValueError: array contains NaNs
+                # and with SI-magnitude E it is a component of the CG divergence
+                # that produces a NaN objective and a uniform-density "design".
+                #
+                # Not auto-corrected: a genuine per-node load (a distributed
+                # pressure expressed per node) is legitimate, and silently
+                # rescaling someone's load would be its own wrong answer. So say
+                # exactly what is being applied and let it be seen.
+                _tot = [float(v) * len(node_ids) for v in force_vec[0]]
+                print(f"   ⚠️  '{force_spec.get('name')}' applies the FULL force to "
+                      f"each of {len(node_ids)} selected nodes "
+                      f"(divide_by_num_nodes=false), so the total applied load is "
+                      f"{_tot}, not {list(force_vec[0])}. If the value was meant as "
+                      f"a total, set divide_by_num_nodes=true — the magnified load "
+                      f"can break the volume constraint and diverge the solver.")
     
             FE.add_point_forces(
                 node_ids=node_ids,
