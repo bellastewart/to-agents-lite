@@ -197,9 +197,31 @@ Stated plainly, because silent degradation is worse than a missing feature:
   thread launch and barrier costs dwarf the per-element work. `backend.py` caps
   it at 8 (`TO_MAX_THREADS`, or set `NUMBA_NUM_THREADS` yourself). Laptops and
   Colab runtimes never hit this; workstations and HPC nodes do.
-- **CPU runs are slower than GPU but usable.** 1.36 s/iteration at 27,648
-  elements. A full run to convergence has still not been done end-to-end through
-  the agent loop.
+- **CPU runs are slower than GPU but usable.** 0.62 s/iteration at 16,000
+  elements, 9.0 s/iteration at 128,000. A full agent loop — two optimizations,
+  renders, vision critique, revision and judging — completes in about 19 min on
+  CPU at those sizes.
+- **Stress renders are impossible on the published pyFANTOM.** Its
+  `capture_solution_screenshots_3D` takes no `stress` argument, so the CPU path
+  produces `depth/` only and `stress/` is genuinely absent. The vision agent
+  degrades to depth-only and says so. Depth images are *not* copied into
+  `stress/` to satisfy the path check — that would hand the model two identical
+  pictures it was told differ, which is worse than a missing directory.
+- **The solver can diverge silently, and the guards are heuristics.** pyFANTOM's
+  preconditioned CG divides unguarded (`beta = rho_new / rho_old`, and three
+  others). Once one yields NaN the loop cannot exit early — `if R < tol: break`
+  is False for NaN — so it runs to `maxiter` and returns garbage that looks
+  converged. Three model-chosen parameters push it there: SI-magnitude `E`, a
+  sub-element `r_min`, and too many multigrid levels for the mesh. All three are
+  now documented in the schema and clamped or capped at build time, and
+  `run_optimization` raises on the first non-finite objective (`TO_ALLOW_NAN=1`
+  to override). None of that fixes the divergence; it stops the pipeline
+  presenting the result of one as a design.
+- **`divide_by_num_nodes` defaults to false, which multiplies a stated load.**
+  Every selected node receives the full force vector, so "a 1 kN load" over 11
+  selected nodes applies 11 kN. It is warned about, not auto-corrected — a
+  genuine per-node load is legitimate and silently rescaling would be its own
+  wrong answer.
 
 See `LITE_STRATEGY.md` for the measurements behind each of these.
 
