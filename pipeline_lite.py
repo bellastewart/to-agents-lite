@@ -203,10 +203,21 @@ llm_config_TO = {
 # when the route changes underneath you. Override if a specific model prefers
 # JSON_SCHEMA:  TO_INSTRUCTOR_MODE=JSON_SCHEMA
 _text_provider = providers.describe_config()["text"].get("provider")
-_SAFE_TOOLS_PROVIDERS = {"gemini", "openrouter"}
+# OpenRouter is back on JSON_SCHEMA. It was switched to TOOLS as a "safer
+# default" on the theory that tool-calling is more portable across the
+# providers OpenRouter routes to. Measured: it is not. In TOOLS mode instructor
+# reads response.choices[0].message.tool_calls[0], and when the model answers
+# with ordinary content instead of a tool call, tool_calls is None:
+#     InstructorRetryException: 'NoneType' object is not subscriptable
+# which names neither the mode nor the reason.
+#
+# JSON_SCHEMA is what the original pipeline used with this same model on
+# Together, and OpenRouter advertises structured_outputs=True for it. Gemini
+# genuinely does need TOOLS -- its OpenAI-compat endpoint rejects
+# response_format.schema outright ('Unknown name "schema"').
 os.environ.setdefault(
     "TO_INSTRUCTOR_MODE",
-    "TOOLS" if _text_provider in _SAFE_TOOLS_PROVIDERS else "JSON_SCHEMA")
+    "TOOLS" if _text_provider == "gemini" else "JSON_SCHEMA")
 print(f"[pipeline_lite] structured : {_text_provider}/{_structured['model']} "
       f"(instructor mode {os.environ['TO_INSTRUCTOR_MODE']})")
 
