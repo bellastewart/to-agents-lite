@@ -492,22 +492,39 @@ class TOAgentBoth(UserProxyAgent):
         # The floor of 8 elements on the coarsest grid is the usual multigrid
         # rule of thumb, and it reproduces the safe answer above. It is
         # calibrated on this one mesh, so it is adjustable rather than hardcoded.
+        # Floor lowered 8 -> 1. At 8 this cap was overriding configurations that
+        # demonstrably work: every run in website/runs uses n_level=5 on a
+        # 128x64x16 mesh (min dim 16) and converges cleanly, 1801 -> 11.52 with
+        # no NaN — but a floor of 8 forces those to n_level=2.
+        #
+        # The cap was calibrated on a NaN case whose real cause turned out to be
+        # SI-magnitude E (see LITE 12), not the level count: the same mesh at
+        # n_level=3 is stable once the units are right. So it was compensating
+        # for a different bug and degrading good solves as a side effect.
+        #
+        # A floor of 1 still blocks genuinely impossible coarsening — a coarse
+        # grid below one element — while leaving working configurations alone.
+        # Raise TO_MG_COARSEST_MIN if a mesh turns out to need more headroom.
         _dims = [int(mesh_params[k]) for k in ("nx", "ny", "nz") if k in mesh_params]
         if _dims and int(multigrid_params.get("n_level", 1)) > 1:
-            _floor = int(os.environ.get("TO_MG_COARSEST_MIN", "8"))
+            _floor = int(os.environ.get("TO_MG_COARSEST_MIN", "1"))
             _safe = 1
             while min(_dims) // (2 ** _safe) >= _floor:
                 _safe += 1
             _asked = int(multigrid_params["n_level"])
             if _asked > _safe:
-                print(f"   ⚠️  n_level={_asked} is too many for a "
-                      f"{'x'.join(str(d) for d in _dims)} mesh: it coarsens the "
-                      f"{min(_dims)}-element direction to "
-                      f"{min(_dims) // (2 ** (_asked - 1))}, below the {_floor}-element "
-                      f"floor, and the V-cycle diverges to NaN mid-run. Using "
-                      f"n_level={_safe}. Raise TO_MG_COARSEST_MIN to override, or "
-                      f"use a finer mesh to afford more levels.")
-                multigrid_params = dict(multigrid_params, n_level=_safe)
+                # WARN ONLY by default, same reasoning as the r_min check above:
+                # the solver settings in the description are what should run.
+                _autofix = os.environ.get("TO_AUTOFIX", "").strip() in ("1", "true", "yes")
+                print(f"   ⚠️  n_level={_asked} coarsens the {min(_dims)}-element "
+                      f"direction of a {'x'.join(str(d) for d in _dims)} mesh down "
+                      f"to {max(1, min(_dims) // (2 ** (_asked - 1)))}, below the "
+                      f"{_floor}-element floor. The V-cycle may diverge to NaN."
+                      + (f" Using n_level={_safe} (TO_AUTOFIX=1)." if _autofix else
+                         f" Running it AS GIVEN — set TO_AUTOFIX=1 to cap it at "
+                         f"{_safe}, or lower TO_MG_COARSEST_MIN."))
+                if _autofix:
+                    multigrid_params = dict(multigrid_params, n_level=_safe)
 
         multigrid_params.setdefault("coarse_solver", COARSE_SOLVER)
         if not HAS_SKSPARSE and multigrid_params["coarse_solver"] == "cholmod":
@@ -549,21 +566,30 @@ class TOAgentBoth(UserProxyAgent):
         # not a guarantee, so clamp here too. Silently accepting the value costs
         # a full run and yields NaN; silently clamping would change the problem
         # without telling anyone -- so clamp loudly.
+        # WARN ONLY by default. The config the agent produced from the problem
+        # description is what gets solved — silently substituting a different
+        # r_min means the run no longer corresponds to the text that described
+        # it, and the difference is invisible afterwards. Set TO_AUTOFIX=1 to
+        # let it correct instead of just reporting.
         _R_MIN_FLOOR = 1.0
         _scalars = ([float(v) for v in r_min_val]
                     if isinstance(r_min_val, (list, tuple)) else [float(r_min_val)])
         if _scalars and min(_scalars) < _R_MIN_FLOOR:
+            _autofix = os.environ.get("TO_AUTOFIX", "").strip() in ("1", "true", "yes")
             print(f"   ⚠️  r_min={min(_scalars):g} is below one element width. "
-                  f"r_min is measured in ELEMENTS, not physical units, and a "
-                  f"sub-element radius disables the density filter — which "
-                  f"causes checkerboarding and an objective of NaN. Raising it "
-                  f"to {_R_MIN_FLOOR + 0.5:g}. If you meant a physical length, "
-                  f"divide it by the element size (lx/nx).")
-            if isinstance(r_min_val, (list, tuple)):
-                r_min_val = [max(float(v), _R_MIN_FLOOR + 0.5) for v in r_min_val]
-            else:
-                r_min_val = _R_MIN_FLOOR + 0.5
-            filter_params = dict(filter_params, r_min=r_min_val)
+                  f"r_min is measured in ELEMENTS, not physical units, so a "
+                  f"sub-element radius disables the density filter — expect "
+                  f"checkerboarding and an objective of NaN. If a physical "
+                  f"length was meant, divide it by the element size (lx/nx)."
+                  + (f" Raising it to {_R_MIN_FLOOR + 0.5:g} (TO_AUTOFIX=1)."
+                     if _autofix else
+                     " Running it AS GIVEN — set TO_AUTOFIX=1 to correct it."))
+            if _autofix:
+                if isinstance(r_min_val, (list, tuple)):
+                    r_min_val = [max(float(v), _R_MIN_FLOOR + 0.5) for v in r_min_val]
+                else:
+                    r_min_val = _R_MIN_FLOOR + 0.5
+                filter_params = dict(filter_params, r_min=r_min_val)
         if isinstance(r_min_val, (list, tuple)):
             # LITE 5: LocalFilter is CUDA-only (pyFANTOM.CPU does not define it).
             # On CPU, collapse the per-element radii to their mean and use the

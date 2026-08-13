@@ -363,21 +363,50 @@ _BASE_EXAMPLES = {
 
 
 def _rescale(text: str) -> str:
-    """Swap the example's nx/ny/nz for what this hardware can finish.
+    """Optionally shrink an example's nx/ny/nz. OFF by default.
 
-    Only the grid counts change — physical dimensions, BCs, loads and the
-    objective are untouched, so it stays the same problem at lower resolution.
+    This used to run unconditionally on anything smaller than a 24 GB GPU, and
+    it silently rewrote the prompt before the agent ever saw it. Its own
+    docstring claimed the problem was preserved:
+
+        "Only the grid counts change ... so it stays the same problem at lower
+         resolution."
+
+    That is false. `r_min` is expressed in ELEMENT widths, so halving the grid
+    DOUBLES the physical filter radius -- and the filter radius is what sets
+    minimum member thickness, i.e. the topology. Running the stock example on a
+    T4 produced a visibly different design from the same text on an A100:
+
+        A100   128x64x16   element 0.0078   filter radius 0.0156
+        T4      64x32x8    element 0.0156   filter radius 0.0313
+
+    Different length scale, different optimum. Both valid, neither comparable.
+    It also drove nz to 8, which is too shallow for the n_level=5 in the same
+    prompt, so multigrid collapsed to a single level as well.
+
+    So the default is now to run the prompt AS WRITTEN. Set
+    TO_RESCALE_EXAMPLES=1 to opt back in, and note the caveat above -- on CPU
+    the stock example is ~15 min per optimisation, and the better lever is
+    TO_MESH (pin it explicitly) or fewer iterations, neither of which quietly
+    changes the physics.
     """
+    if os.environ.get("TO_RESCALE_EXAMPLES", "").strip() not in ("1", "true", "yes"):
+        return text
     nx, ny, nz = _MESH
     if (nx, ny, nz) == (128, 64, 64):
         return text
     m = re.search(r"nx = (\d+), ny = (\d+), nz = (\d+)", text)
     if not m:
         return text
-    # Preserve the example's own aspect ratio (phone_stand is thin in z).
     onx, ony, onz = (int(g) for g in m.groups())
     sx = nx / onx
     new = (max(8, round(onx * sx)), max(4, round(ony * sx)), max(4, round(onz * sx)))
+    if new == (onx, ony, onz):
+        return text
+    print(f"[pipeline_lite] TO_RESCALE_EXAMPLES: example mesh {onx}x{ony}x{onz} "
+          f"-> {new[0]}x{new[1]}x{new[2]}. r_min is in ELEMENT units, so the "
+          f"physical filter radius changes by {onx / new[0]:.2g}x and the "
+          f"resulting topology is NOT comparable to the unscaled run.")
     return text.replace(m.group(0), f"nx = {new[0]}, ny = {new[1]}, nz = {new[2]}")
 
 
