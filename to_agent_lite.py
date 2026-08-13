@@ -29,6 +29,7 @@ import asyncio
 import nest_asyncio
 import time
 import os
+import math
 
 
 #to_agent with multiscreenshots
@@ -708,9 +709,43 @@ class TOAgentBoth(UserProxyAgent):
                            "revision": int(self.revision_number),
                            "objective_history": [float(o) for o in objective_history]}, _pf)
 
+        # LITE 11: stop the moment the objective stops being a number.
+        #
+        # pyFANTOM's preconditioned CG (solvers/CPU/_solvers.py) divides without
+        # guards in three places:
+        #     norm_b = (rhs*rhs).sum()**0.5
+        #     alpha  = rho_old / (p*q).sum()
+        #     R      = norm_r / norm_b
+        #     beta   = rho_new / rho_old
+        # Any of them can yield NaN, and once one does the loop CANNOT exit
+        # early: `if R < self.tol: break` is False for NaN, so it burns all
+        # maxiter iterations and returns garbage that looks converged.
+        #
+        # The optimiser then happily keeps stepping, and the run reports
+        # "Optimization complete" with achieved_volume_fraction 0.0, renders
+        # screenshots of noise, and hands them to the vision agent and judge,
+        # which score them as though they were designs. Every NaN run observed
+        # here did exactly that.
+        #
+        # Continuing past a NaN cannot produce a valid answer, so fail loudly.
+        # Set TO_ALLOW_NAN=1 if you are deliberately debugging the solver.
+        _allow_nan = os.environ.get("TO_ALLOW_NAN", "").strip() not in ("", "0")
         for i in range(num_iterations):
             self.optimizer.iter()
             objective_history.append(self.optimizer.logs()['objective'])
+            _obj = float(objective_history[-1])
+            if not _allow_nan and not math.isfinite(_obj):
+                raise FloatingPointError(
+                    f"Objective became {_obj} at iteration {i + 1}/{num_iterations}. "
+                    f"The linear solve diverged, so every later iteration and the "
+                    f"resulting geometry are meaningless. Common causes, in the "
+                    f"order worth checking: too many multigrid levels for the mesh "
+                    f"(n_level vs min(nx,ny,nz)); a very large Young's modulus in "
+                    f"SI units interacting with Heaviside projection; a filter "
+                    f"r_min below one element. Objective history so far: "
+                    f"{[round(float(o), 4) for o in objective_history[:6]]}"
+                    f"{' ...' if len(objective_history) > 6 else ''}. "
+                    f"Set TO_ALLOW_NAN=1 to continue anyway.")
             if snap_at is not None and (i + 1) == snap_at:
                 os.makedirs(state_dir, exist_ok=True)
                 np.save(os.path.join(state_dir, "rho_snapshot.npy"),
