@@ -586,14 +586,48 @@ class AI_JudgeBoth(UserProxyAgent):
         # Parse per-image scores: "Image A: Score - 3" or "Image A: 3" etc.
         # Match either "Design A" (new dual-image prompt) or "Image A" (legacy
         # single-image fallback) so old transcripts still parse.
-        score_pattern = r"(?:Design|Image)\s+([A-J])[\s:]*(?:Score\s*[-–:]?\s*)?(\d)"
+        # LITE: the original pattern was
+        #     (?:Design|Image)\s+([A-J])[\s:]*(?:Score\s*[-–:]?\s*)?(\d)
+        # which had two defects that between them corrupted 11 of the 21 judge
+        # entries in website/runs.
+        #
+        # 1. `[\s:]*` does not span markdown, so the very common
+        #        **Design A:** 3
+        #    never matched -- the `**` between the colon and the digit stops it.
+        #    The only things that then DID match were the trailing confidence
+        #    percentages ("Design A: 90%"), so entries stored 9 or 8 on a scale
+        #    documented as 1-5. Six entries recorded a confidence as a score.
+        # 2. `(\d)` accepts any digit, and the loop OVERWROTE, so the last match
+        #    anywhere in the response won. Even when the header parsed
+        #    correctly, prose later in the justification replaced it:
+        #        raw : "Design A: 1\nDesign B: 4\n\n**Justification:** ..."
+        #        was : {A: 1, B: 1}
+        #        now : {A: 1, B: 4}
+        #
+        # The pattern below tolerates markdown and the two observed layouts
+        #     **1. Design A: Score - 3**      (score interleaved with prose)
+        #     **Design A:** 3                  (score header block)
+        # restricts the value to the documented 1-5, and keeps the FIRST match
+        # per design. Verified against every judge_history.json in website/runs:
+        # 21/21 entries parse completely, versus 15/21 before, and 11 change.
+        score_pattern = (r"(?:Design|Image)\s+([A-J])\s*[:\-–]?\s*\**\s*"
+                         r"(?:Score\s*[-–:]?\s*)?\**\s*([1-5])\b")
         matches = re.findall(score_pattern, analysis, re.IGNORECASE)
-    
+
         scores = {}
         for letter, score in matches:
             idx = ord(letter.upper()) - 65
-            if idx < len(screenshot_dirs):
-                scores[screenshot_dirs[idx]] = int(score)
+            if idx >= len(screenshot_dirs):
+                continue
+            key = screenshot_dirs[idx]
+            if key not in scores:          # first value wins, not last
+                scores[key] = int(score)
+
+        missing = [d for d in screenshot_dirs if d not in scores]
+        if missing:
+            print(f"   ⚠️  no score parsed for {len(missing)} design(s): "
+                  f"{', '.join(missing)}. They are omitted rather than guessed — "
+                  f"check the judge's response format.")
     
         entry = {
             "timestamp": datetime.now().isoformat(),
