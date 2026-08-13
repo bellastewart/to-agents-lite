@@ -127,9 +127,16 @@ def serve():
     time.sleep(1)
 
     log = HERE / "server.log"
+    # start_new_session detaches it into its own process group and session.
+    # Without it the server is a child of THIS script, and when this script
+    # exits the notebook tears the group down and takes the server with it --
+    # the tunnel then survives and serves a Cloudflare 502 for a backend that
+    # is no longer there. The full notebook never hit this because its launch
+    # cell spawns app.py straight from the kernel, which stays alive.
     proc = subprocess.Popen([sys.executable, "app.py"], cwd=HERE,
                             env=os.environ.copy(),
-                            stdout=open(log, "w"), stderr=subprocess.STDOUT)
+                            stdout=open(log, "w"), stderr=subprocess.STDOUT,
+                            start_new_session=True)
     import socket
     deadline = time.time() + 420
     while time.time() < deadline:
@@ -170,7 +177,8 @@ def tunnel() -> str | None:
                  f"({type(last).__name__}: {last}).")
 
     subprocess.Popen([binary, "tunnel", "--url", f"http://localhost:{PORT}"],
-                     stdout=open(CF_LOG, "w"), stderr=subprocess.STDOUT)
+                     stdout=open(CF_LOG, "w"), stderr=subprocess.STDOUT,
+                     start_new_session=True)          # outlive this script too
     for _ in range(45):
         time.sleep(1)
         try:
