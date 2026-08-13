@@ -1,0 +1,17 @@
+/global/cfs/cdirs/gt/istewart/e2e_test/.venv/lib/python3.12/site-packages/flaml/__init__.py:20: UserWarning: flaml.automl is not available. Please install flaml[automl] to enable AutoML functionalities.
+  warnings.warn("flaml.automl is not available. Please install flaml[automl] to enable AutoML functionalities.")
+[app] importing pipeline (building agents)...
+[pipeline_lite] TO backend  : cpu (cupy not importable (ModuleNotFoundError))
+[pipeline_lite] mesh        : 24x12x12 — pinned by TO_MESH=24,12,12
+[pipeline_lite] text        : gemini/gemini-3.5-flash-lite
+[pipeline_lite] vision      : gemini/gemini-3-flash-preview
+[pipeline_lite] judge       : gemini/gemma-4-31b-it
+[pipeline_lite] structured : gemini/gemini-3.5-flash-lite (instructor mode TOOLS)
+[to_agent_lite] pyFANTOM backend: cpu
+🔧 VLLMAgentBoth initialized for problem type: PHONE
+[pipeline_lite] judge wired : gemini/gemma-4-31b-it
+[app] pipeline ready.
+INFO:     Started server process [1701860]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8796 (Press CTRL+C to quit)

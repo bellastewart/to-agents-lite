@@ -1,6 +1,16 @@
 # TO-Agents Lite
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bellastewart/to-agents-lite/blob/main/notebooks/TO_Agents_Lite_Colab.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bellastewart/to-agents-lite/blob/main/notebooks/TO_Agents_Quickstart.ipynb)
+
+**Two notebooks, same pipeline.**
+
+| | for | cells |
+|---|---|---|
+| [**Quickstart**](https://colab.research.google.com/github/bellastewart/to-agents-lite/blob/main/notebooks/TO_Agents_Quickstart.ipynb) | just run it — key in, link out | **1** |
+| [Full](https://colab.research.google.com/github/bellastewart/to-agents-lite/blob/main/notebooks/TO_Agents_Lite_Colab.ipynb) | changing settings, diagnosing | 10 |
+
+The quickstart hides the machinery in `quickstart.py`; the full notebook shows
+every step and is the one to open when something needs debugging.
 
 A multi-agent topology-optimization pipeline that runs **without a GPU of your own**.
 
