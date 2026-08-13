@@ -229,15 +229,51 @@ def tunnel() -> str | None:
     #
     # So poll until it resolves, and only then print it. Ten quiet seconds here
     # is worth far more than a link that fails once and stays failed.
+    # Checking only the LOCAL resolver is not enough. It answers from wherever
+    # this machine's DNS happens to be, and the visitor's laptop asks a
+    # different one that may not have the record yet -- so the URL can look
+    # ready here and still NXDOMAIN (and get cached) for them. Ask two public
+    # resolvers over DoH as well, and require them to agree, which is a much
+    # better proxy for "propagated" than any single vantage point.
+    import json as _json
     import socket as _socket
+
+    # The two public resolvers use different JSON endpoints:
+    #   Cloudflare  https://cloudflare-dns.com/dns-query   (Accept: application/dns-json)
+    #   Google      https://dns.google/resolve
+    # Returns True only on a definite answer, so an unreachable endpoint reads
+    # as "don't know" rather than "resolved".
+    _DOH = ("https://cloudflare-dns.com/dns-query?name={n}&type=A",
+            "https://dns.google/resolve?name={n}&type=A")
+
+    def _doh(name, url):
+        req = urllib.request.Request(url.format(n=name),
+                                     headers={"Accept": "application/dns-json"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return any(a.get("type") == 1 for a in _json.load(r).get("Answer", []))
+        except Exception:
+            return False
+
     host = host_url.split("://", 1)[1]
-    for attempt in range(40):
+    for attempt in range(60):
+        local = False
         try:
             _socket.getaddrinfo(host, 443)
-            ok(f"(DNS live after {attempt + 1}s)" if attempt else "")
-            return host_url
+            local = True
         except _socket.gaierror:
-            time.sleep(1)
+            pass
+        # Local resolver plus at least ONE public one. Requiring both would
+        # hang whenever an endpoint is unreachable, which is a worse failure
+        # than publishing a second too early.
+        if local and any(_doh(host, u) for u in _DOH):
+            # Even with all three agreeing, give it a moment: a resolver that
+            # has just learned the record is not the same as every resolver
+            # having learned it.
+            time.sleep(5)
+            ok(f"(DNS propagated after {attempt + 6}s)")
+            return host_url
+        time.sleep(1)
 
     # Still not resolving after 40s. Hand it over anyway -- it will almost
     # certainly work shortly -- but say what to do rather than let it look
