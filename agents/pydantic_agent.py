@@ -51,8 +51,29 @@ from autogen import UserProxyAgent, Agent
 # Pydantic Set Up 
 ##############################################################
 class Physics(BaseModel):
-    E: float
-    nu: float
+    # LITE: units made explicit, as for Filter.r_min.
+    #
+    # pyFANTOM is unitless and this pipeline runs on NORMALISED units, the
+    # standard convention in topology optimisation: only the ratio of stiffness
+    # to load sets the design, never their absolute magnitudes. All 11 working
+    # runs in website/runs use exactly E=1.0 with fy=-1.0.
+    #
+    # Nothing said so, so asked for "a steel cantilever" the model emitted the
+    # physically-correct E=2.1e11 with fy=-1000. Measured result: the
+    # preconditioned CG diverges, the objective is NaN for 49 of 50 iterations,
+    # the design never leaves its uniform initial density, and the run still
+    # reports success and is scored by the judge at 100% confidence.
+    E: float = Field(
+        ...,
+        description=(
+            "Young's modulus in NORMALISED units — use 1.0. This solver is "
+            "unitless and only the stiffness-to-load ratio matters, so do NOT "
+            "convert a named material to Pa. 'Steel' is E=1.0 here, not 2.1e11; "
+            "large values make the linear solve diverge to NaN."
+        ),
+    )
+    nu: float = Field(
+        ..., description="Poisson's ratio, dimensionless. Typically 0.3.")
 
 
 class Mesh(BaseModel):
@@ -219,6 +240,15 @@ Rules:
 - The axis rule should be diag if its a diagonal instead of x,y,z directions. 
 
 - For filter:
+    - UNITS: this solver is unitless and runs on NORMALISED values. Use E=1.0
+      and force magnitudes of order 1.0 (e.g. fy=-1.0). Never convert a named
+      material to SI (steel is E=1.0 here, NOT 2.1e11) and never convert a
+      stated load to newtons. Only the stiffness-to-load ratio affects the
+      design; SI magnitudes make the solver diverge to NaN and the run silently
+      returns a uniform block.
+    - If a total load is spread over several selected nodes, set
+      divide_by_num_nodes true, or each node receives the full value and the
+      structure is loaded many times harder than asked.
     - Extract r_min (filter radius, in ELEMENT WIDTHS) if mentioned; if not
       mentioned use 1.5. Never derive it from a physical length — a value
       below 1.0 disables the filter and the optimisation diverges to NaN.
