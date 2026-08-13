@@ -170,7 +170,25 @@ client_TO = OpenAI(api_key=_structured["api_key"], base_url=_structured["base_ur
 llm_config_TO = {
     "client_TO": client_TO,
     "model_TO": _structured["model"],
-    "max_tokens_TO": int(os.environ.get("TO_STRUCTURED_MAX_TOKENS", "20000")),
+    # LITE: was 20000, which is larger than some hosts allow for this model and
+    # is far more than the task needs.
+    #
+    # The original pipeline ran Llama-3.3-70B on Together, which accepted 20000.
+    # OpenRouter serves the same weights but caps that model's completion at
+    # 16384, so the request is rejected outright and comes back as an error body
+    # with no `choices`. The client then indexes None and the agent reports
+    #     Error or rate limit: 'NoneType' object is not subscriptable
+    # which names neither the real cause nor the parameter responsible.
+    #
+    #   meta-llama/llama-3.3-70b-instruct   max_completion_tokens  16384
+    #   qwen/qwen3-vl-32b-instruct                                 32768
+    #   google/gemma-3-27b-it                                     131072
+    #
+    # The output here is one config JSON -- a few hundred tokens. 8192 is still
+    # an order of magnitude of headroom and is under every limit above, so the
+    # same setting works across hosts. Raise it with TO_STRUCTURED_MAX_TOKENS if
+    # a model ever needs more, but check that host's ceiling first.
+    "max_tokens_TO": int(os.environ.get("TO_STRUCTURED_MAX_TOKENS", "8192")),
 }
 
 # instructor's JSON_SCHEMA mode sends `response_format.schema`, which Google's
