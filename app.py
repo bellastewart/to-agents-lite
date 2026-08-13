@@ -37,6 +37,29 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 
+# LITE: import uvicorn HERE, before pipeline_lite. Order matters and the failure
+# is entirely non-obvious.
+#
+# pipeline_lite calls nest_asyncio.apply() at module scope, which replaces
+# asyncio.run with a wrapper that predates Python 3.12's loop_factory argument.
+# uvicorn._compat binds `asyncio_run = asyncio.run` once, AT IMPORT. So importing
+# uvicorn after pipeline_lite captures the patched function, and the server dies
+# the moment it starts:
+#
+#     File "uvicorn/server.py", line 74, in run
+#       return asyncio_run(self.serve(sockets=sockets), loop_factory=...)
+#     TypeError: _patch_asyncio.<locals>.run() got an unexpected keyword
+#               argument 'loop_factory'
+#
+# Importing it first makes uvicorn capture the real asyncio.run, which nest_asyncio
+# leaves untouched. Verified both orders against uvicorn 0.52.1 on Python 3.12:
+#     apply() then import uvicorn -> binds patched run  -> TypeError
+#     import uvicorn then apply() -> binds real run     -> accepts loop_factory
+#
+# `import uvicorn` further down is then a cheap sys.modules hit, and is kept so
+# the launch block still reads as self-contained.
+import uvicorn  # noqa: E402  (must precede the pipeline import below)
+
 HERE = Path(__file__).resolve().parent
 RUNS_DIR = HERE / "runs"
 RUNS_DIR.mkdir(exist_ok=True)
