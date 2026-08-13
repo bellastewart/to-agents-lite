@@ -215,9 +215,30 @@ _text_provider = providers.describe_config()["text"].get("provider")
 # Together, and OpenRouter advertises structured_outputs=True for it. Gemini
 # genuinely does need TOOLS -- its OpenAI-compat endpoint rejects
 # response_format.schema outright ('Unknown name "schema"').
+#
+# OpenRouter needs MD_JSON, and the reason is structural rather than
+# model-specific. It routes each request to whichever provider is serving the
+# model at that moment, and structured-output support differs between them.
+# Observed: meta-llama/llama-3.3-70b-instruct served by Crusoe (vllm-0.24.0)
+# answers a plain completion perfectly but supports neither tool calling nor
+# response_format json_schema. Both TOOLS and JSON_SCHEMA then fail identically:
+#
+#     InstructorRetryException: 'NoneType' object is not subscriptable
+#
+# because instructor indexes a tool_calls / parsed field the response does not
+# contain. Which provider you land on can change between runs, so anything
+# depending on a provider-side feature is unreliable by construction.
+#
+# MD_JSON asks the model to emit JSON in a markdown block and parses the text.
+# It needs no provider feature at all -- only a model that can write JSON --
+# which is the portable choice for an aggregator.
+_MODE_BY_PROVIDER = {
+    "gemini": "TOOLS",           # OpenAI-compat shim rejects response_format.schema
+    "openrouter": "MD_JSON",     # provider varies per request; assume nothing
+}
 os.environ.setdefault(
     "TO_INSTRUCTOR_MODE",
-    "TOOLS" if _text_provider == "gemini" else "JSON_SCHEMA")
+    _MODE_BY_PROVIDER.get(_text_provider, "JSON_SCHEMA"))
 print(f"[pipeline_lite] structured : {_text_provider}/{_structured['model']} "
       f"(instructor mode {os.environ['TO_INSTRUCTOR_MODE']})")
 
