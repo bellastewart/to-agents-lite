@@ -63,26 +63,66 @@ def run(cmd, **kw):
 # --------------------------------------------------------------------------- #
 # 1. packages
 # --------------------------------------------------------------------------- #
+# The libraries chrome-headless-shell links against. `playwright install-deps`
+# should cover these, but it has been observed not to on some Colab images --
+# so they are also installed directly as a fallback rather than trusted.
+_CHROME_LIBS = [
+    "libatk1.0-0", "libatk-bridge2.0-0", "libcups2", "libxkbcommon0",
+    "libxcomposite1", "libxdamage1", "libxfixes3", "libxrandr2", "libgbm1",
+    "libpango-1.0-0", "libcairo2", "libasound2", "libnss3", "libnspr4",
+]
+
+
+def _browser_works() -> bool:
+    """Can Chromium actually start? Not 'is it installed' -- can it RUN."""
+    probe = ("from playwright.sync_api import sync_playwright\n"
+             "with sync_playwright() as p:\n"
+             "    b = p.chromium.launch(headless=True); b.close()\n")
+    return run([sys.executable, "-c", probe]).returncode == 0
+
+
 def _browser():
-    """Chromium + its shared libraries. Runs EVERY time, not just on a fresh
-    install: the Python packages being present says nothing about whether the
-    browser's system libraries are, and skipping this on a second run is how a
-    missing libatk survives a re-run. Both commands are quick no-ops once
-    satisfied."""
-    # --with-deps, NOT plain install. `playwright install chromium` fetches the
-    # browser binary but none of its shared libraries, so on an image that
-    # lacks them the download succeeds and the browser cannot start:
-    #     chrome-headless-shell: error while loading shared libraries:
-    #     libatk-1.0.so.0: cannot open shared object file
-    # which surfaces much later as a Playwright TargetClosedError, after a full
-    # optimization has already run. Colab images vary in what they ship.
-    p = run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"])
-    if p.returncode != 0:
-        # --with-deps needs root for apt; fall back so a non-root machine still
-        # gets the browser rather than nothing.
-        run([sys.executable, "-m", "playwright", "install", "chromium"])
-        return " (browser deps may be incomplete)"
-    return ""
+    """Chromium AND its shared libraries, verified by launching it.
+
+    Runs every time, not only on a fresh install: the Python packages being
+    importable says nothing about whether the browser's system libraries are,
+    and skipping this on a second run is how a missing libatk survives a re-run.
+
+    Verified rather than assumed, because the failure mode is expensive.
+    `playwright install chromium` fetches the binary but no system libraries,
+    so on an image lacking them the download succeeds and the browser cannot
+    start:
+        chrome-headless-shell: error while loading shared libraries:
+        libatk-1.0.so.0: cannot open shared object file
+    That surfaces as a Playwright TargetClosedError at the SCREENSHOT step --
+    after a full 100-iteration optimization has already run. Catching it here
+    costs seconds; missing it costs the whole run.
+    """
+    run([sys.executable, "-m", "playwright", "install", "chromium"])
+    if _browser_works():
+        return ""
+
+    # Missing libraries. Try playwright's own installer, then apt directly.
+    run([sys.executable, "-m", "playwright", "install-deps", "chromium"])
+    if _browser_works():
+        return ""
+
+    if os.geteuid() == 0 or run(["which", "sudo"]).returncode == 0:
+        apt = ["apt-get", "install", "-y", "-qq"] + _CHROME_LIBS
+        if os.geteuid() != 0:
+            apt = ["sudo"] + apt
+        run(["apt-get", "update", "-qq"])
+        run(apt)
+        if _browser_works():
+            return ""
+
+    fail("Chromium cannot start — the renderer would fail after the "
+         "optimization.\n"
+         "  Its system libraries are missing and could not be installed "
+         "automatically.\n"
+         "  Try, then re-run this cell:\n"
+         "      !apt-get update && apt-get install -y "
+         + " ".join(_CHROME_LIBS[:4]) + " ...")
 
 
 def install():

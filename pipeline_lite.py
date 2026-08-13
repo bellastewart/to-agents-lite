@@ -329,20 +329,37 @@ CHECKPOINT_MODE = False
 
 
 def _consecutive_errors(groupchat, window=4):
-    """How many of the most recent agent messages are error payloads."""
+    """How many of the most recent agent messages are error payloads.
+
+    Counts by CONTENT, not by sender. The first version skipped any message
+    whose `name` was missing or was Admin/user_proxy -- but autogen does not
+    always populate `name`, so on a real run those `continue`s swallowed the
+    very messages being counted and the guard never fired. A message either
+    carries an {"error": ...} payload or it does not; who sent it is irrelevant.
+
+    An error may also be wrapped in a markdown fence, so strip that first.
+    """
     import json as _json
+    import re as _re
+
+    def _is_error(content):
+        if not isinstance(content, str):
+            return False
+        text = content.strip()
+        m = _re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, _re.S)
+        if m:
+            text = m.group(1).strip()
+        if not text.startswith("{"):
+            return False
+        try:
+            payload = _json.loads(text)
+        except ValueError:
+            return False
+        return isinstance(payload, dict) and "error" in payload
+
     n = 0
     for m in reversed(groupchat.messages):
-        if m.get("name") in (None, "Admin", "user_proxy"):
-            continue
-        c = m.get("content")
-        if not isinstance(c, str):
-            break
-        try:
-            payload = _json.loads(c)
-        except ValueError:
-            break
-        if isinstance(payload, dict) and "error" in payload:
+        if _is_error(m.get("content")):
             n += 1
             if n >= window:
                 break
