@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TO-Agents — agentic topology optimization</title>
+<meta name="description" content="A group of AI agents turns a written description of a structural problem into a validated setup, runs a 3D topology optimization, critiques the result with a vision model, and revises it." />
+<style>
+  /* Palette matched to the app itself, so launching does not feel like
+     leaving the site. */
+  :root {
+    --bg:#ffffff; --panel-2:#f6f6f3; --border:#e6e4df;
+    --text:#141414; --muted:#6b6b6b; --faint:#9a9a97;
+    --ink:#141414; --accent:#2f5d8c;
+    --shadow:0 1px 2px rgba(20,20,20,.04),0 1px 3px rgba(20,20,20,.03);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif;
+       background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;
+       line-height:1.6;}
+  .wrap{max-width:760px;margin:0 auto;padding:0 24px;}
+
+  header{padding:88px 0 56px;}
+  h1{font-size:40px;line-height:1.15;margin:0 0 18px;font-weight:650;letter-spacing:-.02em;}
+  .lede{font-size:19px;color:var(--muted);margin:0 0 34px;max-width:60ch;}
+
+  .cta{display:inline-flex;align-items:center;gap:10px;background:var(--ink);color:#fff;
+       text-decoration:none;padding:13px 22px;border-radius:8px;font-weight:600;font-size:16px;
+       box-shadow:var(--shadow);}
+  .cta:hover{opacity:.88;}
+  .cta-note{font-size:14px;color:var(--faint);margin-top:12px;}
+
+  h2{font-size:15px;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);
+     font-weight:600;margin:0 0 20px;}
+  section{padding:44px 0;border-top:1px solid var(--border);}
+
+  ol.steps{margin:0;padding:0;counter-reset:s;list-style:none;}
+  ol.steps li{counter-increment:s;position:relative;padding-left:44px;margin-bottom:22px;}
+  ol.steps li::before{content:counter(s);position:absolute;left:0;top:1px;
+      width:27px;height:27px;border-radius:50%;background:var(--panel-2);
+      border:1px solid var(--border);display:grid;place-items:center;
+      font-size:13px;font-weight:600;color:var(--muted);}
+  ol.steps b{font-weight:600;}
+  ol.steps p{margin:3px 0 0;color:var(--muted);font-size:15px;}
+
+  .agents{display:grid;gap:1px;background:var(--border);border:1px solid var(--border);
+          border-radius:10px;overflow:hidden;}
+  .agent{background:var(--bg);padding:15px 18px;display:grid;
+         grid-template-columns:150px 1fr;gap:16px;align-items:baseline;}
+  .agent .n{font-family:var(--mono);font-size:13px;color:var(--accent);}
+  .agent .d{font-size:15px;color:var(--muted);}
+  @media (max-width:560px){ .agent{grid-template-columns:1fr;gap:2px;} }
+
+  table{width:100%;border-collapse:collapse;font-size:15px;}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);}
+  th{font-weight:600;font-size:13px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;}
+  td.k{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+
+  a{color:var(--accent);}
+  code{font-family:var(--mono);font-size:.9em;background:var(--panel-2);
+       padding:1px 5px;border-radius:4px;}
+  .note{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;
+        padding:16px 18px;font-size:15px;color:var(--muted);}
+  .note b{color:var(--text);font-weight:600;}
+  footer{padding:40px 0 72px;color:var(--faint);font-size:14px;border-top:1px solid var(--border);}
+  footer a{color:var(--muted);}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <h1>Structural design, argued out by a group of agents.</h1>
+    <p class="lede">
+      Describe a structural problem in plain technical prose. A group of AI agents
+      turns it into a validated configuration, runs a 3D topology optimization,
+      looks at the rendered result with a vision model, proposes revisions, re-runs,
+      and scores the candidates against each other — streaming the whole
+      conversation to your browser as it happens.
+    </p>
+    <a class="cta" href="https://colab.research.google.com/github/bellastewart/to-agents-lite/blob/main/notebooks/TO_Agents_Quickstart.ipynb">
+      Launch it &rarr;
+    </a>
+    <div class="cta-note">Runs on a free Colab GPU. About four minutes to start. One API key.</div>
+  </header>
+
+  <section>
+    <h2>How to run it</h2>
+    <ol class="steps">
+      <li><b>Get a free API key.</b>
+        <p><a href="https://aistudio.google.com/apikey">Google AI Studio</a> gives one
+        away with no payment method. That is all you need.</p></li>
+      <li><b>Open the notebook and add the key.</b>
+        <p>Click the key icon in Colab's left sidebar, add it as
+        <code>GEMINI_API_KEY</code>, and switch on notebook access.</p></li>
+      <li><b>Runtime &rarr; Run all.</b>
+        <p>One cell. It installs everything and prints a link when the site is ready.</p></li>
+      <li><b>Open the link it prints.</b>
+        <p>That is the app. Paste a description, or start from a built-in example.</p></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>The agents</h2>
+    <div class="agents">
+      <div class="agent"><span class="n">pydantic_agent</span>
+        <span class="d">Turns your prose into a validated solver configuration.</span></div>
+      <div class="agent"><span class="n">to_agent</span>
+        <span class="d">Runs the 3D topology optimization and renders the result.</span></div>
+      <div class="agent"><span class="n">vllm_agent</span>
+        <span class="d">Looks at the renders and critiques the design.</span></div>
+      <div class="agent"><span class="n">revise_agent</span>
+        <span class="d">Turns that critique into a revised configuration.</span></div>
+      <div class="agent"><span class="n">ai_judge</span>
+        <span class="d">Scores the candidates against each other.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What it runs on</h2>
+    <table>
+      <tr><th>Piece</th><th>Full build</th><th>Here</th></tr>
+      <tr><td class="k">solver</td><td>pyFANTOM CUDA, 1 GPU</td><td>a free Colab T4, or CPU</td></tr>
+      <tr><td class="k">vision</td><td>Qwen2.5-VL-7B, local vLLM</td><td>hosted API</td></tr>
+      <tr><td class="k">judge</td><td>Gemma-3-27B, 2 GPUs</td><td>hosted API</td></tr>
+      <tr><td class="k">rendering</td><td>headless Chromium</td><td>unchanged — needs no GPU</td></tr>
+    </table>
+    <p style="color:var(--muted);font-size:15px;margin:20px 0 0;">
+      The original needs four A100s. This version needs none of your own — the
+      solver is the only piece that wants a GPU, and Colab lends you one.
+    </p>
+  </section>
+
+  <section>
+    <h2>Two tiers</h2>
+    <table>
+      <tr><th></th><th>Free</th><th>Plus</th></tr>
+      <tr><td class="k">key</td><td>Gemini</td><td>OpenRouter</td></tr>
+      <tr><td class="k">payment method</td><td>no</td><td>yes</td></tr>
+      <tr><td class="k">cost</td><td>$0</td><td>~$0.002 per run</td></tr>
+      <tr><td class="k">limit</td><td>~6–10 runs/day</td><td>none</td></tr>
+    </table>
+    <p style="color:var(--muted);font-size:15px;margin:20px 0 0;">
+      The free tier is the default and needs no card. Plus exists because
+      Gemini's free quota is capped per day; it swaps in larger models and
+      removes the cap.
+    </p>
+  </section>
+
+  <section>
+    <h2>Worth knowing</h2>
+    <div class="note">
+      <b>This is research code, and it shows.</b> A run takes minutes, not
+      seconds — the optimization is real, not a canned animation. Results depend
+      on what the agents decide, so two runs of the same description will not be
+      identical. If something breaks, the
+      <a href="https://github.com/bellastewart/to-agents-lite/blob/main/notebooks/TO_Agents_Lite_Colab.ipynb">full notebook</a>
+      exposes every step and <code>doctor.py</code> checks each piece
+      independently.
+    </div>
+  </section>
+
+  <footer>
+    <a href="https://github.com/bellastewart/to-agents-lite">Source on GitHub</a>
+    &nbsp;·&nbsp;
+    <a href="https://colab.research.google.com/github/bellastewart/to-agents-lite/blob/main/notebooks/TO_Agents_Quickstart.ipynb">Quickstart notebook</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/bellastewart/to-agents-lite/blob/main/README.md">Documentation</a>
+  </footer>
+
+</div>
+</body>
+</html>
