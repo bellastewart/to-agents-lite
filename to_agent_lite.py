@@ -428,7 +428,33 @@ class TOAgentBoth(UserProxyAgent):
     
         physics = LinearElasticity(**physics_params)
         mesh_params.pop("physics", None)
-        mesh = StructuredMesh3D(**mesh_params, physics=physics)
+        # LITE 14: working precision, selectable.
+        #
+        # pyFANTOM builds everything in float64 by default, and every downstream
+        # object inherits `mesh.dtype` (stiffness kernel, FE, solver, ops). That
+        # is the right default on an A100, which does FP64 at ~9.7 TFLOPS.
+        #
+        # It is the wrong default on the GPUs a visitor actually gets. A T4 runs
+        # FP64 at 1/32 of its FP32 rate — about 0.25 TFLOPS, roughly 39x slower
+        # than an A100 rather than the ~5x their memory bandwidths suggest. That
+        # is why a Colab T4 felt far slower than expected: the solve is
+        # compute-starved in double precision long before bandwidth matters.
+        #
+        # TO_DTYPE=float32 makes the whole chain single-precision. Topology
+        # optimisation is generally tolerant of it — the design is driven by
+        # relative sensitivities, not absolute magnitudes — but it is NOT free:
+        # the multigrid CG already divides unguarded (see LITE 11) and less
+        # precision means more chances for the residual to underflow. Left at
+        # float64 by default for that reason; opt in and check the objective
+        # history looks sane.
+        _dtype_name = os.environ.get("TO_DTYPE", "float64").strip().lower()
+        if _dtype_name not in ("float32", "float64"):
+            raise ValueError(f"TO_DTYPE must be float32 or float64, got {_dtype_name!r}")
+        if _dtype_name == "float32":
+            print(f"   working precision: float32 (TO_DTYPE) — much faster on "
+                  f"GPUs with weak FP64 (T4/L4); watch the objective history.")
+        mesh = StructuredMesh3D(**mesh_params, physics=physics,
+                                dtype=getattr(np, _dtype_name))
         kernel = StructuredStiffnessKernel(mesh=mesh)
         # LITE 7: pyFANTOM's MultiGrid defaults to coarse_solver='cholmod',
         # which needs scikit-sparse. That package is source-only and frequently
@@ -621,11 +647,52 @@ class TOAgentBoth(UserProxyAgent):
     # k3d -> HTML -> headless Chromium with no GPU involved. So CPU can call it
     # directly. It is not re-exported from `visualizers/__init__`, hence the
     # private-module import.
+    @staticmethod
+    def _normalise_shot_layout(screenshot_dir):
+        """Ensure renders end up in <dir>/depth/, whatever produced them.
+
+        LITE 8b: vllm_agent_both and ai_judge_both read
+            <dir>/depth/{view}.png   and   <dir>/stress/{view}.png
+        The pyFANTOM published on GitHub writes them FLAT into <dir>. Its
+        renderer also takes no `stress` argument, so the depth/stress split
+        that the agents expect simply does not exist in that build.
+
+        The CPU fallback below already targets depth/, but the CUDA path calls
+        pyFANTOM's own capture, which writes flat -- so on a GPU the agents
+        found nothing:
+            Neither stress nor depth screenshot found (checked
+            screenshots/stress/front.png and screenshots/depth/front.png)
+            -> vllm_agent "analysis": null
+            -> revise_agent "Missing required data"
+            -> to_agent ValidationError, 8 missing fields
+        A whole run lost to a directory level. So normalise afterwards rather
+        than depending on which code path produced the files.
+        """
+        if not os.path.isdir(screenshot_dir):
+            return
+        stray = [f for f in os.listdir(screenshot_dir)
+                 if f.lower().endswith(".png")
+                 and os.path.isfile(os.path.join(screenshot_dir, f))]
+        if not stray:
+            return
+        depth = os.path.join(screenshot_dir, "depth")
+        os.makedirs(depth, exist_ok=True)
+        for f in stray:
+            os.replace(os.path.join(screenshot_dir, f), os.path.join(depth, f))
+        print(f"   ↳ moved {len(stray)} render(s) into '{depth}' — this "
+              f"pyFANTOM writes them flat, but the vision agent and judge read "
+              f"<dir>/depth/.")
+
     def _capture_screenshots(self, screenshot_dir):
         """Render depth + stress screenshots on whichever backend is active."""
         native = getattr(self.problem, "capture_solution_screenshots", None)
         if callable(native):
-            return native(output_dir=screenshot_dir)
+            result = native(output_dir=screenshot_dir)
+            # The native call may be a coroutine; the caller awaits it and then
+            # normalises. Only flatten here when it already ran to completion.
+            if not asyncio.iscoroutine(result) and not isinstance(result, asyncio.Task):
+                self._normalise_shot_layout(screenshot_dir)
+            return result
 
         from pyFANTOM.visualizers._3d import capture_solution_screenshots_3D
         import numpy as _np
@@ -844,6 +911,10 @@ class TOAgentBoth(UserProxyAgent):
             elif isinstance(result, asyncio.Task):
                 loop = asyncio.get_event_loop()
                 loop.run_until_complete(result)
+            # LITE 8b: only now are the files definitely on disk. Runs the
+            # flat -> depth/ move for the async paths, and is a cheap no-op
+            # when _capture_screenshots already did it synchronously.
+            self._normalise_shot_layout(screenshot_dir)
         # ===== END TRIAL =====
 
         
