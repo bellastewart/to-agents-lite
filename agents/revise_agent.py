@@ -21,6 +21,34 @@ def _instructor_mode():
             f"Available: {', '.join(sorted(available))}")
     return mode
 
+
+def _extra_body():
+    """Provider-routing options passed through to the OpenAI-compatible call.
+
+    LITE. OpenRouter picks a provider per request, and they do not all support
+    the same features. Observed on one run: generation 1 went to Cloudflare and
+    came back finish_reason='error' with a 500; generation 2 went to AkashML,
+    which answered but ignored the schema and returned `physics` as an object
+    where the model expects a list, with optimization_settings missing entirely.
+
+    OpenRouter's fix for this is `provider.require_parameters`: only route to
+    providers that actually support the parameters in the request, so asking for
+    a JSON schema means only providers that honour one are eligible.
+
+    Set TO_OPENAI_EXTRA_BODY to a JSON object to override; pipeline_lite sets a
+    sensible default for OpenRouter.
+    """
+    import json as _json
+    import os as _os
+    raw = _os.environ.get("TO_OPENAI_EXTRA_BODY", "").strip()
+    if not raw:
+        return {}
+    try:
+        body = _json.loads(raw)
+    except ValueError as e:
+        raise ValueError(f"TO_OPENAI_EXTRA_BODY is not valid JSON: {e}") from e
+    return {"extra_body": body} if body else {}
+
 # Import all Pydantic models from pydantic_agent
 from agents.pydantic_agent import (
     PydanticStructure,
@@ -478,6 +506,7 @@ Output the revised configuration:"""
                 max_tokens=max_tokens,
                 temperature=0.1,  # Low temperature for precise parsing
                 response_model=PydanticStructure,  # Enforce schema
+                **_extra_body(),          # LITE: provider routing
             )
             
             # Convert Pydantic model to dict (like PydanticAgent's TOsolve)

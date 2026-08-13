@@ -234,11 +234,29 @@ _text_provider = providers.describe_config()["text"].get("provider")
 # which is the portable choice for an aggregator.
 _MODE_BY_PROVIDER = {
     "gemini": "TOOLS",           # OpenAI-compat shim rejects response_format.schema
-    "openrouter": "MD_JSON",     # provider varies per request; assume nothing
 }
 os.environ.setdefault(
     "TO_INSTRUCTOR_MODE",
     _MODE_BY_PROVIDER.get(_text_provider, "JSON_SCHEMA"))
+
+# OpenRouter: constrain WHICH provider serves the request rather than weakening
+# what we ask for.
+#
+# It picks a provider per request and they differ in capability. One run showed
+# both failure modes in a single call: generation 1 went to Cloudflare and
+# returned finish_reason='error' with a 500; generation 2 went to AkashML, which
+# answered but ignored the schema -- `physics` came back as an object where the
+# model requires a list, and optimization_settings was missing entirely.
+#
+# MD_JSON avoided the crash by asking for markdown-fenced JSON, but it enforces
+# nothing, so the shape drifts exactly as above. require_parameters instead
+# tells OpenRouter to route ONLY to providers that support the parameters in the
+# request -- so asking for a JSON schema restricts it to providers that honour
+# one, and JSON_SCHEMA (what the original pipeline used on Together) becomes
+# reliable again.
+if _text_provider == "openrouter":
+    os.environ.setdefault("TO_OPENAI_EXTRA_BODY",
+                          '{"provider": {"require_parameters": true}}')
 print(f"[pipeline_lite] structured : {_text_provider}/{_structured['model']} "
       f"(instructor mode {os.environ['TO_INSTRUCTOR_MODE']})")
 
