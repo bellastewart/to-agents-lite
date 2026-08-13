@@ -301,10 +301,27 @@ def free_vram_mb() -> float | None:
 # Sized by VRAM ratio against the known-good 128x64x64 on a 40 GB A100.
 # NOTE: only the A100 row is measured; the others are estimates and should be
 # confirmed on real hardware before being promised to anyone.
+# These sized for "what fits in VRAM", which is the wrong question. A demo is
+# bounded by patience, not capacity. Measured, from the recorded time_per_iter
+# in website/runs plus this build's own runs:
+#
+#   A100  131,072 elements   0.34 s/iter        (measured, website/runs)
+#   A100  8,388,608          10.0 s/iter        (measured, website/runs)
+#   CPU   128,000            8.99 s/iter        (measured here)
+#
+# A T4 has roughly a fifth of an A100's memory bandwidth, so the old >=10 GB row
+# (96x48x48 = 221,184 elements) works out near 5 MINUTES per optimization -- and
+# a run does up to four of them. Reported from an actual T4 session as "still
+# optimizing the initial design" long after it should have finished.
+#
+# So the ladder now targets roughly a minute per optimization on the class of
+# GPU each row describes, which puts a full four-optimization run in the low
+# single-digit minutes. Anyone who wants resolution over speed sets TO_MESH; the
+# A100 row is unchanged because it was fast enough already.
 _MESH_LADDER = [
-    (24_000, (128, 64, 64)),   # >=24 GB  — A100/A6000 class: unchanged
-    (10_000, (96, 48, 48)),    # >=10 GB  — T4/L4/3080 class  (ESTIMATE)
-    (6_000,  (64, 32, 32)),    # >=6 GB   — small GPU         (ESTIMATE)
+    (24_000, (128, 64, 64)),   # >=24 GB — A100/A6000: measured at 0.34 s/iter
+    (10_000, (64, 32, 32)),    # >=10 GB — T4/L4/3080: was 96x48x48 (~5 min/opt)
+    (6_000,  (48, 24, 24)),    # >=6 GB  — small GPU
 ]
 _CPU_MESH = (48, 24, 24)
 
