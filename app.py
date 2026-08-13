@@ -37,13 +37,13 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 
-# LITE: import uvicorn HERE, before pipeline_lite. Order matters and the failure
+# LITE: import uvicorn HERE, before the pipeline. Order matters and the failure
 # is entirely non-obvious.
 #
 # pipeline_lite calls nest_asyncio.apply() at module scope, which replaces
 # asyncio.run with a wrapper that predates Python 3.12's loop_factory argument.
 # uvicorn._compat binds `asyncio_run = asyncio.run` once, AT IMPORT. So importing
-# uvicorn after pipeline_lite captures the patched function, and the server dies
+# uvicorn after the pipeline captures the patched function and the server dies
 # the moment it starts:
 #
 #     File "uvicorn/server.py", line 74, in run
@@ -51,13 +51,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Fil
 #     TypeError: _patch_asyncio.<locals>.run() got an unexpected keyword
 #               argument 'loop_factory'
 #
-# Importing it first makes uvicorn capture the real asyncio.run, which nest_asyncio
-# leaves untouched. Verified both orders against uvicorn 0.52.1 on Python 3.12:
-#     apply() then import uvicorn -> binds patched run  -> TypeError
-#     import uvicorn then apply() -> binds real run     -> accepts loop_factory
-#
-# `import uvicorn` further down is then a cheap sys.modules hit, and is kept so
-# the launch block still reads as self-contained.
+# Verified both orders against uvicorn 0.52.1 on Python 3.12.
 import uvicorn  # noqa: E402  (must precede the pipeline import below)
 
 HERE = Path(__file__).resolve().parent
@@ -260,7 +254,21 @@ def _run_worker(description, run_dir, q):
         seen_frames = set()
         seen_imgs = set()
         last_prog = {}
+        last_guard = {"json": None}
         cfg_cache = {"cfg": None}
+
+        def do_guard():
+            gp = run_dir / "guard.json"
+            if not gp.exists():
+                return
+            try:
+                txt = gp.read_text()
+                if txt == last_guard["json"]:
+                    return
+                last_guard["json"] = txt
+                q.put(("guard", json.loads(txt)))
+            except Exception:
+                pass
 
         def do_setup():
             cfg, path = _latest_config(run_dir)
@@ -292,8 +300,17 @@ def _run_worker(description, run_dir, q):
                     continue
                 seen_frames.add(rel)
                 png = npy.with_suffix(".png")
+                # actual element grid recorded alongside the frames (pyFANTOM bumps
+                # the requested nx/ny/nz, so config dims can't be trusted).
+                grid = None
+                prog = npy.parent / "progress.json"
                 try:
-                    viz.render_density_frame(str(npy), cfg, str(png))
+                    if prog.exists():
+                        grid = json.loads(prog.read_text()).get("grid")
+                except Exception:
+                    grid = None
+                try:
+                    viz.render_density_frame(str(npy), cfg, str(png), grid=grid)
                 except Exception as e:  # noqa: BLE001
                     q.put(("log", f"[frame render failed: {e}]"))
                     continue
@@ -322,6 +339,13 @@ def _run_worker(description, run_dir, q):
                 rel = png.relative_to(run_dir).as_posix()
                 if rel in seen_imgs:
                     continue
+                # The browser capture writes these asynchronously — don't emit a
+                # half-written file (leave it unseen so it's retried next poll).
+                try:
+                    if png.stat().st_size < 1024:
+                        continue
+                except OSError:
+                    continue
                 seen_imgs.add(rel)
                 parts = png.relative_to(run_dir).parts
                 top = parts[0]
@@ -334,7 +358,7 @@ def _run_worker(description, run_dir, q):
             msgs = pipeline.manager.groupchat.messages
             while seen_msgs < len(msgs):
                 push_msg(msgs[seen_msgs], seen_msgs + 1); seen_msgs += 1
-            do_setup(); do_frames(); do_images()
+            do_setup(); do_frames(); do_images(); do_guard()
             time.sleep(0.3)
         # final sweep
         msgs = pipeline.manager.groupchat.messages
@@ -454,5 +478,5 @@ async def run(request: Request):
 if __name__ == "__main__":
     import uvicorn
     host = os.environ.get("TO_WEB_HOST", "0.0.0.0")
-    port = int(os.environ.get("TO_WEB_PORT", "8765"))
+    port = int(os.environ.get("TO_WEB_PORT", "8080"))
     uvicorn.run(app, host=host, port=port, log_level="info")

@@ -107,7 +107,7 @@ def render_setup_plotly(config, out_html):
     import plotly.graph_objects as go
 
     nx, ny, nz, lx, ly, lz = _mesh_dims(config)
-    pts, spacing = _sample_grid(lx, ly, lz)
+    pts, spacing = _sample_grid(lx, ly, lz, n=46)   # denser sampling → fuller faces/lines
     traces = []
 
     # domain box as a single line trace (None separators between edges)
@@ -118,7 +118,7 @@ def render_setup_plotly(config, out_html):
         by += [corners[a][1], corners[b][1], None]
         bz += [corners[a][2], corners[b][2], None]
     traces.append(go.Scatter3d(x=bx, y=by, z=bz, mode="lines",
-                               line=dict(color="#7d8590", width=3),
+                               line=dict(color="#c7c5bf", width=2, dash="dash"),
                                name="domain", hoverinfo="skip", showlegend=False))
 
     # boundary conditions
@@ -131,7 +131,7 @@ def render_setup_plotly(config, out_html):
         name = bc.get("name") or f"BC {i+1}"
         traces.append(go.Scatter3d(
             x=pts[mask, 0], y=pts[mask, 1], z=pts[mask, 2], mode="markers",
-            marker=dict(size=3.5, color="#f778ba", symbol="square"),
+            marker=dict(size=4.5, color="#f778ba", symbol="square"),
             name=f"{name}: fix {','.join(fixed) or 'none'} ({int(mask.sum())})",
             hovertemplate="fixed %{text}<extra></extra>",
             text=[",".join(fixed)] * int(mask.sum())))
@@ -153,7 +153,7 @@ def render_setup_plotly(config, out_html):
         name = frc.get("name") or f"Load {i+1}"
         traces.append(go.Scatter3d(
             x=pts[mask, 0], y=pts[mask, 1], z=pts[mask, 2], mode="markers",
-            marker=dict(size=3, color="#ffa657", opacity=0.6), name=f"{name}: {cs}",
+            marker=dict(size=4, color="#ffa657", opacity=0.7), name=f"{name}: {cs}",
             hoverinfo="skip"))
         tail = loc - u * L
         traces.append(go.Scatter3d(x=[tail[0], loc[0]], y=[tail[1], loc[1]], z=[tail[2], loc[2]],
@@ -167,17 +167,20 @@ def render_setup_plotly(config, out_html):
 
     fig = go.Figure(data=traces)
     fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+        template="plotly_white",
+        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        font=dict(color="#141414"),
         margin=dict(l=0, r=0, t=10, b=0),
-        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11, color="#e6edf3"),
+        legend=dict(bgcolor="rgba(255,255,255,0)", font=dict(size=11, color="#141414"),
                     x=0, y=1, orientation="v"),
         scene=dict(
-            xaxis=dict(title="x", backgroundcolor="#161b22", gridcolor="#30363d", color="#9198a1"),
-            yaxis=dict(title="y", backgroundcolor="#161b22", gridcolor="#30363d", color="#9198a1"),
-            zaxis=dict(title="z", backgroundcolor="#161b22", gridcolor="#30363d", color="#9198a1"),
+            xaxis=dict(title="x", backgroundcolor="#ffffff", gridcolor="#e6e4df", color="#6b6b6b"),
+            yaxis=dict(title="y", backgroundcolor="#ffffff", gridcolor="#e6e4df", color="#6b6b6b"),
+            zaxis=dict(title="z", backgroundcolor="#ffffff", gridcolor="#e6e4df", color="#6b6b6b"),
             aspectmode="data",
-            camera=dict(up=dict(x=0, y=0, z=1), eye=dict(x=0.5, y=-1.35, z=1.5)),
+            # Default to a front elevation: x horizontal, y vertical (up), looking
+            # along z with a slight tilt so depth reads. Fully draggable afterward.
+            camera=dict(up=dict(x=0, y=1, z=0), eye=dict(x=0.2, y=0.25, z=1.9)),
         ),
     )
     fig.write_html(out_html, include_plotlyjs="directory", full_html=True,
@@ -269,34 +272,48 @@ def render_setup_diagram(config, out_path):
 # --------------------------------------------------------------------------- #
 # 2. density movie frame
 # --------------------------------------------------------------------------- #
-def _reshape_rho(rho, nx, ny, nz):
+def _reshape_rho(rho, grid, config):
+    """Reshape a flat density array to a 3D grid.
+
+    Prefers the actual element grid recorded at dump time (``grid`` = [gx,gy,gz]);
+    falls back to the config's nx/ny/nz, then to any matching permutation. Returns
+    None if nothing matches (pyFANTOM bumps the requested dims, so the config
+    grid alone is unreliable)."""
     n = rho.size
-    for shape in ((nx, ny, nz), (nz, ny, nx), (nx, nz, ny)):
-        if all(shape) and np.prod(shape) == n:
+    candidates = []
+    if grid and all(grid) and int(np.prod(grid)) == n:
+        candidates.append(tuple(int(g) for g in grid))
+    nx, ny, nz, *_ = _mesh_dims(config)
+    candidates += [(nx, ny, nz), (nz, ny, nx), (nx, nz, ny)]
+    for shape in candidates:
+        if all(shape) and int(np.prod(shape)) == n:
             try:
                 return rho.reshape(shape)
             except Exception:
                 continue
-    # fallback: best-effort square-ish 2D
-    side = int(round(np.sqrt(n)))
-    if side * side == n:
-        return rho.reshape(side, side, 1)
     return None
 
 
-def render_density_frame(npy_path, config, out_path, proj_axis=2, cmap="magma"):
-    """Reshape a saved rho array to the mesh grid, project to 2D, save a PNG frame."""
-    rho = np.load(npy_path)
-    rho = np.asarray(rho, dtype=float).ravel()
-    nx, ny, nz, lx, ly, lz = _mesh_dims(config)
-    vol = _reshape_rho(rho, nx, ny, nz)
+def render_density_frame(npy_path, config, out_path, grid=None, proj_axis=None, cmap="magma"):
+    """Reshape a saved rho array to the mesh grid, project along its thinnest axis
+    to a 2D silhouette, and save a PNG movie frame."""
+    rho = np.asarray(np.load(npy_path), dtype=float).ravel()
+    vol = _reshape_rho(rho, grid, config)
     if vol is None:
-        # give up gracefully: 1D bar
-        img = rho.reshape(1, -1)
+        img = rho.reshape(1, -1)          # last-resort: 1D strip
     else:
-        axis = min(proj_axis, vol.ndim - 1)
-        img = vol.max(axis=axis)          # silhouette: densest material along thickness
-        img = np.flipud(img.T)            # x horizontal, y vertical, origin lower-left
+        axis = proj_axis if proj_axis is not None else int(np.argmin(vol.shape))
+        img = vol.max(axis=axis)          # densest material along the thickness
+        img = np.flipud(img.T)            # first remaining axis horizontal, origin lower-left
     img = np.clip(img, 0.0, 1.0)
-    mpimg.imsave(out_path, img, cmap=cmap, vmin=0.0, vmax=1.0)
+    # Magma material with transparent voids, so the structure floats on the dark
+    # viewport (no black box). Bright magma reads clearly against the dark stage.
+    try:
+        cmap_fn = cm.get_cmap(cmap)
+    except Exception:
+        import matplotlib
+        cmap_fn = matplotlib.colormaps[cmap]
+    rgba = cmap_fn(img)                                    # (H, W, 4) float
+    rgba[..., 3] = np.clip((img - 0.10) / 0.4, 0.0, 1.0)  # alpha ∝ density (voids clear)
+    mpimg.imsave(out_path, rgba)
     return out_path

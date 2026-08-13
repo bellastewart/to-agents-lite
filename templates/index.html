@@ -6,18 +6,23 @@
 <title>TO-Agents · Topology Optimization Demo</title>
 <style>
   :root {
-    --bg:#0e1117; --panel:#161b22; --panel-2:#1c2230; --border:#2a3240;
-    --text:#e6edf3; --muted:#8b949e; --faint:#6e7681;
-    --accent:#4c8dff; --accent-2:#7c5cff; --ok:#3fb950; --warn:#d29922; --err:#f85149;
+    --bg:#ffffff; --panel:#ffffff; --panel-2:#f6f6f3; --border:#e6e4df;
+    --text:#141414; --muted:#6b6b6b; --faint:#9a9a97;
+    --ink:#141414;                       /* solid black actions */
+    --accent:#2f5d8c;                    /* restrained architectural blue */
+    --accent-2:#2f5d8c;
+    --ok:#2f7d4f; --warn:#b9770e; --err:#c0392b;
+    --shadow:0 1px 2px rgba(20,20,20,.04),0 1px 3px rgba(20,20,20,.03);
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box;}
   html,body{height:100%;margin:0;}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-       background:var(--bg);color:var(--text);display:flex;flex-direction:column;}
-  header{padding:12px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif;
+       background:var(--bg);color:var(--text);display:flex;flex-direction:column;
+       -webkit-font-smoothing:antialiased;}
+  header{padding:14px 26px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;
          gap:14px;background:var(--panel);}
-  header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px;}
+  header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.02em;text-transform:uppercase;}
   header .sub{color:var(--muted);font-size:13px;}
   header .spacer{flex:1;}
   #status-pill{font-size:12px;padding:4px 11px;border-radius:999px;border:1px solid var(--border);
@@ -44,9 +49,9 @@
   .chip:hover{border-color:var(--accent);}
   .actions{display:flex;gap:9px;}
   button{font-family:inherit;}
-  button.run{flex:1;padding:11px 16px;border:none;border-radius:10px;cursor:pointer;
-             background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;
-             font-size:14px;font-weight:600;}
+  button.run{flex:1;padding:11px 16px;border:none;border-radius:8px;cursor:pointer;
+             background:var(--ink);color:#fff;font-size:14px;font-weight:600;letter-spacing:.01em;}
+  button.run:hover{background:#000;}
   button.run:disabled{opacity:.5;cursor:not-allowed;}
   button.stop{padding:11px 16px;border-radius:10px;cursor:pointer;background:transparent;
               border:1px solid var(--err);color:var(--err);font-size:14px;font-weight:600;display:none;}
@@ -68,9 +73,10 @@
   #pane-run.active{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px;align-items:start;}
   @media (max-width:1200px){#pane-run.active{grid-template-columns:1fr;}}
 
-  .card{border:1px solid var(--border);border-radius:12px;background:var(--panel);margin-bottom:16px;overflow:hidden;}
-  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);
-           margin:0;padding:11px 14px;border-bottom:1px solid var(--border);background:var(--panel-2);}
+  .card{border:1px solid var(--border);border-radius:10px;background:var(--panel);margin-bottom:16px;
+        overflow:hidden;box-shadow:var(--shadow);}
+  .card h2{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
+           margin:0;padding:11px 14px;border-bottom:1px solid var(--border);background:var(--panel-2);font-weight:600;}
   .card .body{padding:14px;}
 
   /* NOW card */
@@ -110,13 +116,14 @@
   .agent .dot,.agent .k{background:var(--c);}
 
   /* setup */
-  #setup-frame{width:100%;height:440px;border:0;border-radius:8px;background:#161b22;display:block;}
+  #setup-frame{width:100%;height:440px;border:0;border-radius:8px;background:#ffffff;display:block;}
   #setup ul{margin:12px 0 0;padding-left:18px;font-size:12.5px;color:var(--muted);line-height:1.7;}
 
   /* movie */
-  #movie .stage{position:relative;background:#000;border-radius:8px;overflow:hidden;
-                display:flex;align-items:center;justify-content:center;min-height:200px;}
-  #movie .stage img{max-width:100%;image-rendering:pixelated;display:block;}
+  #movie .stage{position:relative;background:#14181f;border:1px solid var(--border);border-radius:8px;
+                overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:260px;padding:18px;}
+  #movie .stage img{width:min(74%,500px);height:auto;max-width:100%;
+                    image-rendering:pixelated;display:block;}
   #movie .frameLabel{position:absolute;top:8px;left:10px;font-family:var(--mono);font-size:12px;
                      color:#fff;background:rgba(0,0,0,.5);padding:2px 8px;border-radius:6px;}
   .mvcontrols{display:flex;align-items:center;gap:10px;margin-top:10px;}
@@ -128,6 +135,15 @@
   .revpill{font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);
            background:var(--panel-2);color:var(--muted);cursor:pointer;}
   .revpill.active{border-color:var(--accent);color:var(--text);}
+  .revpill.rejected{border-color:var(--err);color:var(--err);text-decoration:line-through;}
+  .revpill.best{border-color:var(--ok);color:var(--ok);}
+  #guard .body{font-size:12.5px;line-height:1.55;}
+  .g-item{padding:6px 0;border-bottom:1px solid var(--border);}
+  .g-item:last-child{border-bottom:0;}
+  .g-reject{color:var(--err);} .g-best{color:var(--ok);}
+  .rev-badge{font-size:10px;padding:2px 7px;border-radius:999px;margin-left:8px;vertical-align:middle;}
+  .rev-badge.bad{background:rgba(248,81,73,.15);color:var(--err);}
+  .rev-badge.good{background:rgba(63,185,80,.15);color:var(--ok);}
   #curveWrap{margin-top:12px;}
   #curve{width:100%;height:130px;display:block;background:var(--bg);border:1px solid var(--border);border-radius:8px;}
   .curveMeta{font-size:11.5px;color:var(--muted);margin-top:6px;font-family:var(--mono);}
@@ -137,11 +153,11 @@
   .rev-group h3{font-size:12px;color:var(--muted);margin:0 0 8px;text-transform:uppercase;letter-spacing:.6px;}
   .img-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;}
   .img-card{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--panel);}
-  .img-card img{width:100%;display:block;background:#000;cursor:zoom-in;}
+  .img-card img{width:100%;display:block;background:#faf9f7;cursor:zoom-in;}
   .img-card .cap{font-size:11px;color:var(--muted);padding:5px 8px;font-family:var(--mono);}
 
   #log{font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--muted);white-space:pre-wrap;word-break:break-word;}
-  #log .l{display:block;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.03);}
+  #log .l{display:block;padding:1px 0;border-bottom:1px solid rgba(20,20,20,.04);}
   .empty{color:var(--muted);font-size:13px;text-align:center;margin-top:50px;}
   .hidden{display:none;}
 
@@ -193,6 +209,7 @@
 
       <!-- RIGHT column of run view: visuals -->
       <div>
+        <div class="card hidden" id="guard"><h2>Stability guard</h2><div class="body" id="guard-body"></div></div>
         <div class="card hidden" id="setup"><h2>Intended setup — boundary conditions &amp; loads
           <span style="text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400;"> · drag to rotate</span></h2>
           <div class="body"><iframe id="setup-frame" title="problem setup"></iframe><ul id="setup-list"></ul></div></div>
@@ -308,6 +325,7 @@ function addFrame(f){
   r.frames.sort((a,b)=>a.iter-b.iter);
   if(movie.cur===f.revision && movie.following){ $('#mv-slider').value=r.frames.length-1; showFrame(r.frames.length-1); }
   if(movie.cur===f.revision) $('#mv-slider').max=r.frames.length-1;
+  applyGuardMarks();
 }
 function renderMovie(){
   const r=movie.revs[movie.cur]; if(!r) return;
@@ -323,15 +341,20 @@ function showFrame(i){
 }
 $('#mv-slider').oninput=e=>{ movie.following=false; showFrame(+e.target.value); };
 $('#mv-play').onclick=togglePlay;
+// Early iterations (<=50) are where the shape forms — linger on them; speed up later.
+const SLOW_UNTIL_ITER=50, SLOW_MS=480, FAST_MS=130;
 function togglePlay(){
   movie.playing=!movie.playing; $('#mv-play').textContent=movie.playing?'❚❚':'▶';
-  if(movie.playing){ movie.following=false;
-    movie.timer=setInterval(()=>{
-      const r=movie.revs[movie.cur]; if(!r||!r.frames.length) return;
-      let v=(+$('#mv-slider').value)+1; if(v>r.frames.length-1) v=0;
-      $('#mv-slider').value=v; showFrame(v);
-    },180);
-  } else { clearInterval(movie.timer); }
+  if(movie.playing){ movie.following=false; scheduleNext(); }
+  else { clearTimeout(movie.timer); }
+}
+function scheduleNext(){
+  const r=movie.revs[movie.cur];
+  if(!movie.playing || !r || !r.frames.length){ movie.playing=false; $('#mv-play').textContent='▶'; return; }
+  let v=(+$('#mv-slider').value)+1; if(v>r.frames.length-1) v=0;
+  $('#mv-slider').value=v; showFrame(v);
+  const it = r.frames[v] ? r.frames[v].iter : 9999;
+  movie.timer=setTimeout(scheduleNext, it<=SLOW_UNTIL_ITER ? SLOW_MS : FAST_MS);
 }
 function updateProgress(p){
   const r=ensureRev(p.revision); r.obj=p.objective||[]; r.total=p.total;
@@ -348,17 +371,22 @@ function drawCurve(obj,total){
   const X=i=>pad + (i/(Math.max(1,N-1)))*xs;
   const Y=v=>8 + (1-(v-mn)/(mx-mn))*ys;
   // axes
-  ctx.strokeStyle='#30363d'; ctx.lineWidth=2; ctx.beginPath();
+  ctx.strokeStyle='#d8d6d1'; ctx.lineWidth=2; ctx.beginPath();
   ctx.moveTo(pad,8); ctx.lineTo(pad,H-pad); ctx.lineTo(W-8,H-pad); ctx.stroke();
   // line
-  ctx.strokeStyle='#4c8dff'; ctx.lineWidth=3; ctx.beginPath();
+  ctx.strokeStyle='#2f5d8c'; ctx.lineWidth=3; ctx.beginPath();
   obj.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
   // last point
   const lx=X(n-1),ly=Y(obj[n-1]);
-  ctx.fillStyle='#4c8dff'; ctx.beginPath(); ctx.arc(lx,ly,5,0,7); ctx.fill();
-  ctx.fillStyle='#8b949e'; ctx.font='20px monospace';
+  ctx.fillStyle='#2f5d8c'; ctx.beginPath(); ctx.arc(lx,ly,5,0,7); ctx.fill();
+  ctx.fillStyle='#6b6b6b'; ctx.font='20px monospace';
   $('#curve-meta').textContent=`iter ${n}${total? '/'+total:''} · objective ${obj[n-1].toFixed(4)} (min ${mn.toFixed(4)})`;
 }
+
+// ---- stability guard (runs silently in the background; no UI) ----
+let guardData={rejected:[],best:null,stopped_by_guard:false};
+function showGuard(g){ guardData=g||{rejected:[],best:null,stopped_by_guard:false}; }
+function applyGuardMarks(){}
 
 // ---- setup ----
 function showSetup(s){
@@ -378,9 +406,16 @@ function addResult(r){
     g.innerHTML=`<h3>${r.revision==0?'Initial design':'Revision '+r.revision}</h3><div class="img-grid"></div>`;
     $('#results').appendChild(g); resultGroups[key]=g; }
   const card=document.createElement('div'); card.className='img-card';
-  card.innerHTML=`<img src="${r.url}" loading="lazy"/><div class="cap">${escapeHtml(r.kind)} · ${escapeHtml(r.view)}</div>`;
-  card.querySelector('img').onclick=()=>zoom(r.url);
+  const img=document.createElement('img'); img.loading='lazy';
+  // The render may still be finishing on disk when we first request it; retry.
+  let attempts=0;
+  img.onerror=()=>{ if(attempts++<12) setTimeout(()=>{ img.src=r.url+'?retry='+attempts; }, 500*Math.min(attempts,6)); };
+  img.onclick=()=>zoom(r.url);
+  img.src=r.url;
+  const cap=document.createElement('div'); cap.className='cap'; cap.textContent=r.kind+' · '+r.view;
+  card.appendChild(img); card.appendChild(cap);
   g.querySelector('.img-grid').appendChild(card);
+  applyGuardMarks();
 }
 
 // ---- log ----
@@ -423,8 +458,11 @@ function handleFrame(frame){
   else if(event==='progress'){ updateProgress(o);
     setNow('to_agent','Topology Optimizer',`Optimizing — iteration ${o.iter}${o.total?'/'+o.total:''}.`,true); }
   else if(event==='result'){ addResult(o); }
+  else if(event==='guard'){ showGuard(o); }
   else if(event==='log'){ if(o) addLog(o); }
-  else if(event==='status'){ if(o.message) setNow(undefined,$('#now-who').textContent,o.message,running);
+  else if(event==='status'){
+    if(o.run_id) runId=o.run_id;
+    if(o.message) setNow(undefined,$('#now-who').textContent,o.message,running);
     if(o.state==='done') finish('done',o.message,o.transcript); }
   else if(event==='error'){ finish('error',o.message); if(o.trace) addLog(o.trace); }
   else if(event==='close'){ if(running) finish('done','Done.'); }
@@ -450,6 +488,7 @@ function clearOutput(){
   $('#rev-pills').innerHTML=''; for(const k in resultGroups) delete resultGroups[k];
   movie.revs={}; movie.cur=null; movie.following=true;
   $('#setup').classList.add('hidden'); $('#movie').classList.add('hidden'); $('#result').classList.add('hidden');
+  $('#guard').classList.add('hidden'); $('#guard-body').innerHTML=''; guardData={rejected:[],best:null,stopped_by_guard:false};
   $('#frame-img').src=''; drawCurve([],null);
 }
 
