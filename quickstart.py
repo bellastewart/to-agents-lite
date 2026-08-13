@@ -63,6 +63,28 @@ def run(cmd, **kw):
 # --------------------------------------------------------------------------- #
 # 1. packages
 # --------------------------------------------------------------------------- #
+def _browser():
+    """Chromium + its shared libraries. Runs EVERY time, not just on a fresh
+    install: the Python packages being present says nothing about whether the
+    browser's system libraries are, and skipping this on a second run is how a
+    missing libatk survives a re-run. Both commands are quick no-ops once
+    satisfied."""
+    # --with-deps, NOT plain install. `playwright install chromium` fetches the
+    # browser binary but none of its shared libraries, so on an image that
+    # lacks them the download succeeds and the browser cannot start:
+    #     chrome-headless-shell: error while loading shared libraries:
+    #     libatk-1.0.so.0: cannot open shared object file
+    # which surfaces much later as a Playwright TargetClosedError, after a full
+    # optimization has already run. Colab images vary in what they ship.
+    p = run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"])
+    if p.returncode != 0:
+        # --with-deps needs root for apt; fall back so a non-root machine still
+        # gets the browser rather than nothing.
+        run([sys.executable, "-m", "playwright", "install", "chromium"])
+        return " (browser deps may be incomplete)"
+    return ""
+
+
 def install():
     step(1, "installing packages")
     need = run([sys.executable, "-c",
@@ -70,7 +92,8 @@ def install():
                 "sys.exit(0 if all(u.find_spec(m) for m in "
                 "('pyFANTOM','k3d','vtk','playwright','autogen','instructor')) else 1)"])
     if need.returncode == 0:
-        ok("(already present)")
+        note = _browser()
+        ok("(already present)" + note)
         return
 
     p = run([sys.executable, "-m", "pip", "install", "-q",
@@ -89,21 +112,7 @@ def install():
     if run(["nvidia-smi"]).returncode == 0:
         run([sys.executable, "-m", "pip", "install", "-q", "cupy-cuda12x<14"])
 
-    # --with-deps, NOT plain install. `playwright install chromium` fetches the
-    # browser binary but none of its shared libraries, so on an image that
-    # lacks them the download succeeds and the browser cannot start:
-    #     chrome-headless-shell: error while loading shared libraries:
-    #     libatk-1.0.so.0: cannot open shared object file
-    # which surfaces much later as a Playwright TargetClosedError, after a full
-    # optimization has already run. Colab images vary in what they ship, so
-    # this cannot be assumed.
-    p = run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"])
-    if p.returncode != 0:
-        # --with-deps needs root for apt; fall back so a non-root machine still
-        # gets the browser rather than nothing.
-        run([sys.executable, "-m", "playwright", "install", "chromium"])
-        print("(browser deps may be incomplete) ", end="", flush=True)
-    ok()
+    ok(_browser())
 
 
 # --------------------------------------------------------------------------- #
