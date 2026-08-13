@@ -440,19 +440,32 @@ class TOAgentBoth(UserProxyAgent):
         # is why a Colab T4 felt far slower than expected: the solve is
         # compute-starved in double precision long before bandwidth matters.
         #
-        # TO_DTYPE=float32 makes the whole chain single-precision. Topology
-        # optimisation is generally tolerant of it — the design is driven by
-        # relative sensitivities, not absolute magnitudes — but it is NOT free:
-        # the multigrid CG already divides unguarded (see LITE 11) and less
-        # precision means more chances for the residual to underflow. Left at
-        # float64 by default for that reason; opt in and check the objective
-        # history looks sane.
+        # TO_DTYPE=float32 would therefore be the obvious fix for those GPUs.
+        # MEASURED: IT DOES NOT WORK. The mesh and kernel build fine in single
+        # precision and then the FIRST solver iteration never returns. On CPU,
+        # 16x8x8 = 1,024 elements:
+        #
+        #     float64   build 0.1s   iter 0.0s   objective 1440.4
+        #     float32   build 0.1s   iter        did not finish in 440s
+        #
+        # The multigrid/CG cannot reach tol (1e-4/1e-5) with float32 round-off,
+        # so it never satisfies its exit test and spins. No error, no NaN --
+        # just a hang, which is the worst way for this to fail.
+        #
+        # Kept as an option rather than deleted because CUDA takes a different
+        # code path (cupyx solvers, not scipy) and might behave differently, and
+        # because the FP64 penalty on consumer GPUs is real enough to be worth
+        # revisiting. But it is off by default and warns, because "appears to do
+        # nothing forever" is not something to hand someone unannounced.
         _dtype_name = os.environ.get("TO_DTYPE", "float64").strip().lower()
         if _dtype_name not in ("float32", "float64"):
             raise ValueError(f"TO_DTYPE must be float32 or float64, got {_dtype_name!r}")
         if _dtype_name == "float32":
-            print(f"   working precision: float32 (TO_DTYPE) — much faster on "
-                  f"GPUs with weak FP64 (T4/L4); watch the objective history.")
+            print("   ⚠️  TO_DTYPE=float32 — MEASURED TO HANG on the CPU backend: "
+                  "the solver's first iteration never returns because multigrid "
+                  "cannot reach its tolerance in single precision. Untested on "
+                  "CUDA. If this run stalls with no output, that is why; unset "
+                  "TO_DTYPE to go back to float64.")
         mesh = StructuredMesh3D(**mesh_params, physics=physics,
                                 dtype=getattr(np, _dtype_name))
         kernel = StructuredStiffnessKernel(mesh=mesh)
