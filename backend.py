@@ -179,10 +179,8 @@ def _ensure_sksparse() -> bool:
 
 
 HAS_SKSPARSE = _ensure_sksparse()
-# Coarse solver for MultiGrid. pyFANTOM defaults to 'cholmod', which is exactly
-# the thing that may not exist; fall back to scipy's sparse LU when it doesn't.
-COARSE_SOLVER = os.environ.get(
-    "TO_COARSE_SOLVER", "cholmod" if HAS_SKSPARSE else "splu").strip()
+# COARSE_SOLVER is chosen further down, once BACKEND is known — the right answer
+# differs by backend. See the block after the BACKEND selection.
 
 
 def _cuda_usable() -> tuple[bool, str]:
@@ -239,6 +237,26 @@ else:
     BACKEND = "cuda" if _ok else "cpu"
 
 _REASON = _why
+
+# Coarse solver for MultiGrid. The right choice DIFFERS BY BACKEND, and the
+# names mislead because they resolve to different libraries:
+#
+#   CUDA  pyFANTOM imports cg/gmres/spsolve/splu from cupyx.scipy.sparse.linalg,
+#         so 'splu' runs ON THE GPU. 'cholmod' is the odd one out — it does
+#         K.tocsc().get() to factor on the host, then rhs.get() / cp.array(...)
+#         on EVERY coarse solve, round-tripping continuously. On a 2-core Colab
+#         VM that is far worse than staying on the device.
+#
+#   CPU   pyFANTOM imports them from scipy.sparse.linalg, so everything is on
+#         the host regardless, and CHOLMOD's sparse Cholesky genuinely beats
+#         splu when scikit-sparse is available.
+#
+# So cholmod is preferred only on the CPU backend. Preferring it on CUDA — which
+# this previously did whenever scikit-sparse happened to be installed — inserts
+# a host round-trip into an otherwise all-GPU V-cycle.
+COARSE_SOLVER = os.environ.get(
+    "TO_COARSE_SOLVER",
+    "cholmod" if (HAS_SKSPARSE and BACKEND != "cuda") else "splu").strip()
 
 # --------------------------------------------------------------------------- #
 # bind the array module and the pyFANTOM symbols
