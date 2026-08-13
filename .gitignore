@@ -13,3 +13,10 @@ __pycache__/
 
 # Notebook outputs: strip before committing (`nbstripout --install`)
 # Outputs are where credentials and large images sneak into git history.
+
+# Runtime artifacts written into the repo dir by app.py / quickstart.py.
+# Untracked files do not normally block a pull, but they make `git status`
+# noisy and would collide the moment a file of the same name is committed.
+server.log
+cloudflared
+cloudflared.log
