@@ -343,8 +343,34 @@ class PydanticAgent(UserProxyAgent):
                 print("Time: ", datetime.now() - now)
                 return result
             except Exception as e:
-                print("Error or rate limit:", e)
-                time.sleep(60)
+                # LITE: the original swallowed every failure as "Error or rate
+                # limit", printed str(e), and slept 60s. That hides the cause of
+                # the most common real failure. "'NoneType' object is not
+                # subscriptable" is not a rate limit -- it is the provider
+                # returning an error body with no `choices`, so the client does
+                # choices[0] on None. Out of credits, an invalid key and an
+                # unsupported response_format all look identical this way, and
+                # the 60s sleep is paid on every one of them.
+                import traceback
+                print(f"Structured output failed: {type(e).__name__}: {e}")
+                if "not subscriptable" in str(e) or "NoneType" in str(e):
+                    print("   This usually means the API returned an error "
+                          "instead of a completion — no `choices` in the "
+                          "response. Most likely, in order:")
+                    print("     1. the provider account is out of credit, or "
+                          "the key is wrong/expired")
+                    print("     2. rate limited")
+                    print("     3. the model rejected the structured-output "
+                          "mode — try TO_INSTRUCTOR_MODE=JSON (or MD_JSON)")
+                    print("   Check the key and balance before assuming it is "
+                          "the model.")
+                traceback.print_exc()
+                # Only a genuine rate limit is worth waiting out; sleeping a
+                # minute on a bad key just makes the failure slower.
+                if any(s in str(e).lower() for s in
+                       ("rate", "429", "quota", "too many requests")):
+                    print("   rate limited — waiting 60s")
+                    time.sleep(60)
                 return None
 
     def TOsolve(self, params: PydanticStructure):
