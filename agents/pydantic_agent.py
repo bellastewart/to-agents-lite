@@ -208,8 +208,19 @@ class Optimizer(BaseModel):
     change_tol: Optional[float] = None  # Keep this as None (represents np.inf)
     fun_tol: float
 
-class Optimization_settings(BaseModel): 
-    num_iterations: int 
+class Optimization_settings(BaseModel):
+    # LITE: defaulted. The example descriptions do not state an iteration count
+    # -- they end at the optimizer's tolerances -- so the model has nothing to
+    # base this on and omits the whole object. Under strict schema enforcement
+    # (Together) it was filled in anyway; providers reached through OpenRouter
+    # honour the schema more loosely, and the run then died with
+    #     1 validation error for PydanticStructure
+    #     optimization_settings  Field required
+    # after producing a completely correct config otherwise.
+    #
+    # 100 is what every run in website/runs uses.
+    num_iterations: int = Field(
+        100, description="Number of optimization iterations. Default 100.")
 
 
 class PydanticStructure(BaseModel):
@@ -221,7 +232,7 @@ class PydanticStructure(BaseModel):
     filter: Filter  
     problem: Problem  
     optimizer: Optimizer
-    optimization_settings: Optimization_settings
+    optimization_settings: Optimization_settings = Optimization_settings()
 
 
 response_model = PydanticStructure

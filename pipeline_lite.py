@@ -328,8 +328,50 @@ agents = [user_proxy, pydantic_agent, to_agent, vllm_agent, revise_agent, ai_jud
 CHECKPOINT_MODE = False
 
 
+def _consecutive_errors(groupchat, window=4):
+    """How many of the most recent agent messages are error payloads."""
+    import json as _json
+    n = 0
+    for m in reversed(groupchat.messages):
+        if m.get("name") in (None, "Admin", "user_proxy"):
+            continue
+        c = m.get("content")
+        if not isinstance(c, str):
+            break
+        try:
+            payload = _json.loads(c)
+        except ValueError:
+            break
+        if isinstance(payload, dict) and "error" in payload:
+            n += 1
+            if n >= window:
+                break
+        else:
+            break
+    return n
+
+
 def speaker_selection_func(last_speaker, groupchat):
     if os.path.exists("STOP"):
+        return None
+
+    # Stop a dead run instead of cycling it to max_round.
+    #
+    # When pydantic_agent fails, every agent after it fails on what the previous
+    # one left behind: to_agent cannot parse the config, vllm_agent returns
+    # analysis:null because there are no renders, revise_agent finds neither a
+    # config nor suggestions, and the group chat loops that cycle until
+    # max_round=100 -- spending API calls per turn and producing a transcript
+    # where the real cause is buried at the very top.
+    #
+    # Three consecutive error payloads means nothing downstream can recover, so
+    # end it. The transcript still holds the original failure, now as the last
+    # thing worth reading rather than the first of fifty.
+    _n = _consecutive_errors(groupchat)
+    if _n >= 3:
+        print(f"\n[pipeline_lite] Stopping: {_n} agents in a row returned an "
+              f"error, so nothing downstream can recover. The first error above "
+              f"is the real one — everything after it is a consequence.")
         return None
     if last_speaker is user_proxy:
         return pydantic_agent
